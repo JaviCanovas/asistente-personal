@@ -28,7 +28,7 @@ export default function MiDiaClient({
   const [itemsHoy, setItemsHoy] = useState<Item[]>(itemsHoyIniciales)
   const [itemsManana, setItemsManana] = useState<Item[]>(itemsMananaIniciales)
   const [backlog, setBacklog] = useState<Item[]>(backlogInicial)
-  const [showSuggestions, setShowSuggestions] = useState(true)
+  const [showSuggestions, setShowSuggestions] = useState(false)
 
   const [isPending, startTransition] = useTransition()
 
@@ -269,7 +269,7 @@ export default function MiDiaClient({
   const totalSugerencias = vencidas.length + programadas.length + inboxItems.length + prioritarias.length + restoBacklog.length
 
   return (
-    <div className="max-w-6xl mx-auto animate-fade-in pb-16 flex flex-col gap-8">
+    <div className="max-w-6xl mx-auto animate-fade-in pb-8 md:pb-16 flex flex-col gap-5 md:gap-8">
       {/* Cabecera */}
       <header>
         <p className="text-xs uppercase tracking-widest font-semibold text-slate-500 mb-1.5" style={{ fontFamily: 'var(--font-inter)' }}>
@@ -287,7 +287,7 @@ export default function MiDiaClient({
       </header>
 
       {/* Tabs selectoras */}
-      <div className="flex gap-2 p-1.5 rounded-2xl bg-[#101320] border border-white/5 max-w-md">
+      <div className="flex gap-2 p-1.5 rounded-2xl bg-[#101320] border border-white/5 w-full sm:max-w-md">
         <button
           onClick={() => setTabActive('hoy')}
           className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold transition-all duration-200 select-none ${
@@ -310,7 +310,7 @@ export default function MiDiaClient({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-10 items-start">
         {/* Columna de Tareas Planificadas (Izquierda/Principal) */}
         <div className="lg:col-span-2 flex flex-col gap-6">
           {/* Input rápido - Formato Flex para evitar solapamientos */}
@@ -334,9 +334,9 @@ export default function MiDiaClient({
           {/* Listado */}
           <div className="space-y-4">
             {currentItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 text-center bg-[#101320]/40 rounded-2xl border border-dashed border-white/5 text-slate-500 p-8 backdrop-blur-sm">
-                <CheckCircle className="w-14 h-14 text-slate-600/60 mb-4" />
-                <p className="text-base font-bold text-slate-300">No hay tareas planificadas aún</p>
+              <div className="flex flex-col items-center justify-center py-12 md:py-24 text-center bg-[#101320]/40 rounded-2xl border border-dashed border-white/5 text-slate-500 p-6 backdrop-blur-sm">
+                <CheckCircle className="w-10 h-10 md:w-14 md:h-14 text-slate-600/60 mb-3" />
+                <p className="text-sm md:text-base font-bold text-slate-300">No hay tareas planificadas aún</p>
                 <p className="text-xs text-slate-500 mt-2 max-w-[320px] leading-relaxed">
                   Escribe una arriba o selecciona tareas desde el panel de sugerencias de la derecha.
                 </p>

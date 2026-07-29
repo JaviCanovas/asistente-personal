@@ -120,25 +120,25 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
   const PRIORIDADES: ItemPrioridad[] = ['baja', 'media', 'alta', 'urgente']
 
   return (
-    <div className="max-w-3xl mx-auto px-2 py-2">
+    <div className="max-w-3xl mx-auto px-1 py-1">
       {/* Header */}
-      <div className="flex items-center justify-between pb-6 mb-8 border-b" style={{ borderColor: 'var(--border)' }}>
-        <div className="flex items-center gap-3.5">
-          <div className="p-3 rounded-xl flex items-center justify-center animate-pulse-glow" style={{ background: 'var(--accent)' }}>
-            <Inbox className="w-6 h-6 text-white" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-6 border-b gap-3" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl flex items-center justify-center animate-pulse-glow" style={{ background: 'var(--accent)' }}>
+            <Inbox className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>Bandeja de Entrada</h1>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Captura rápida e inteligente con un solo clic</p>
+            <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>Bandeja de Entrada</h1>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Captura rápida e inteligente con un solo clic</p>
           </div>
         </div>
-        <span className="badge font-semibold px-3.5 py-1.5 text-xs" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+        <span className="badge font-semibold px-3 py-1 text-xs self-start sm:self-auto" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
           {itemsIniciales.length} sin procesar
         </span>
       </div>
 
       {/* Captura Rápida Premium */}
-      <div className="card p-5 mb-8" style={{ border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+      <div className="card p-4 mb-6" style={{ border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <div className="relative flex flex-col gap-3">
           <textarea
             ref={textareaRef}

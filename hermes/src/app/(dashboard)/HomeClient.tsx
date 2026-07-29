@@ -92,11 +92,11 @@ export default function HomeClient({
   return (
     <div className="max-w-6xl mx-auto animate-fade-in">
       {/* Header */}
-      <header className="mb-8">
+      <header className="mb-5 md:mb-8">
         <p className="text-xs uppercase tracking-widest font-semibold text-slate-500 mb-1" style={{ fontFamily: 'var(--font-inter)' }}>
           Vista general de hoy
         </p>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
           ¡Buenos días, JC!
         </h1>
         <p className="text-sm text-slate-400 capitalize mt-0.5" style={{ fontFamily: 'var(--font-inter)' }}>
@@ -105,10 +105,10 @@ export default function HomeClient({
       </header>
 
       {/* Grid de Paneles */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
         
         {/* PANEL 1: Prioridades de hoy */}
-        <section className="card flex flex-col justify-between p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+        <section className="card flex flex-col justify-between p-4 md:p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
           <div>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-white tracking-wide uppercase text-[0.8125rem]" style={{ letterSpacing: '0.05em' }}>
@@ -185,7 +185,7 @@ export default function HomeClient({
         </section>
 
         {/* PANEL 2: Agenda de hoy */}
-        <section className="card flex flex-col justify-between p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+        <section className="card flex flex-col justify-between p-4 md:p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
           <div>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-white tracking-wide uppercase text-[0.8125rem]" style={{ letterSpacing: '0.05em' }}>
@@ -264,7 +264,7 @@ export default function HomeClient({
         </section>
 
         {/* PANEL 3: Upcoming Gym Session */}
-        <section className="card flex flex-col justify-between p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+        <section className="card flex flex-col justify-between p-4 md:p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
           <div>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-xs font-bold text-white tracking-widest uppercase">
