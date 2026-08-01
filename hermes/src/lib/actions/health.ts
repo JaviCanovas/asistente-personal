@@ -67,9 +67,69 @@ const PLANTILLAS_PREDEFINIDAS = [
   }
 ]
 
+// Mapa de descansos por nombre de ejercicio (fuente de verdad)
+const DESCANSOS_POR_EJERCICIO: Record<string, string> = {
+  'Press de Banca (Barra)': '3 min',
+  'Dominadas Supinas': '3 min',
+  'Remo en T (Máquina)': '2 min',
+  'Press Militar (Manc.)': '2 min',
+  'Elev. Laterales (Manc.)': '90 seg',
+  'Curl Bíceps Martillo': '60 seg',
+  'Elev. Piernas Suelo': '60 seg',
+  'Sentadilla V-Squat': '3 min',
+  'Peso Muerto Rumano': '3 min',
+  'Curl Isquios (Máquina)': '2 min',
+  'Extensión Cuádriceps': '90 seg',
+  'Aductores (Máquina)': '60 seg',
+  'Gemelos en Máquina': '60 seg',
+  'Plancha Abdominal': '60 seg',
+  'Press Inclinado (Multi/Manc)': '2 min',
+  'Fondos Tríceps/Pecho': '90 seg',
+  'Aperturas (Máquina/Polea)': '60 seg',
+  'Elev. Laterales (Máq/Polea)': '60 seg',
+  'Tríceps Polea (Cuerda)': '60 seg',
+  'Press Pallof (Core)': '60 seg',
+  'Dominadas Pronas (Abiertas)': '2 min',
+  'Remo Agarre Cerrado/Gironda': '90 seg',
+  'Jalón al Pecho': '90 seg',
+  'Face Pull (Polea Alta)': '60 seg',
+  'Bíceps Banco Scott': '60 seg',
+  'Superserie: Bíceps Curl Alterno + Abs Polea Alta Crunch': '60-90 seg',
+}
+
 // ============================================================
 // GYM ACTIONS
 // ============================================================
+
+export async function sincronizarDescansos(): Promise<{ ok: boolean; mensaje: string }> {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, mensaje: 'Supabase no configurado — usando datos locales' }
+  }
+  const supabase = createAdminClient()
+  const { data: plantillas, error } = await supabase
+    .from('plantillas_gym')
+    .select('id, ejercicios')
+    .order('orden')
+  if (error || !plantillas) {
+    return { ok: false, mensaje: `Error al leer plantillas: ${error?.message}` }
+  }
+
+  let actualizadas = 0
+  for (const p of plantillas) {
+    const ejerciciosActualizados = (p.ejercicios as any[]).map((ej: any) => ({
+      ...ej,
+      descanso: DESCANSOS_POR_EJERCICIO[ej.nombre] ?? ej.descanso ?? '—',
+    }))
+    const { error: updateError } = await supabase
+      .from('plantillas_gym')
+      .update({ ejercicios: ejerciciosActualizados })
+      .eq('id', p.id)
+    if (!updateError) actualizadas++
+  }
+
+  revalidatePath('/gym')
+  return { ok: true, mensaje: `${actualizadas} plantilla(s) actualizadas con los tiempos de descanso` }
+}
 
 export async function getPlantillasGym(): Promise<PlantillaGym[]> {
   if (!isSupabaseConfigured()) return PLANTILLAS_PREDEFINIDAS

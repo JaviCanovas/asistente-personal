@@ -6,7 +6,7 @@ import { Dumbbell, Plus, Trash2, TrendingUp, Loader2, Check, Edit2, Play, Chevro
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import type { RutinaGym, PlantillaGym, EjercicioPlantilla } from '@/lib/types'
 import { formatFecha } from '@/lib/utils'
-import { crearRutinaGym, eliminarRutinaGym, guardarPlantillaGym, registrarSesionCompleta } from '@/lib/actions/health'
+import { crearRutinaGym, eliminarRutinaGym, guardarPlantillaGym, registrarSesionCompleta, sincronizarDescansos } from '@/lib/actions/health'
 
 interface GymClientProps {
   rutinas: RutinaGym[]
@@ -30,6 +30,8 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
   const [diaExpandido, setDiaExpandido] = useState<string | null>(plantillasIniciales[0]?.id ?? null)
   const [editandoPlantillaId, setEditandoPlantillaId] = useState<string | null>(null)
   const [ejerciciosEditables, setEjerciciosEditables] = useState<any[]>([])
+  const [sincronizando, setSincronizando] = useState(false)
+  const [mensajeSync, setMensajeSync] = useState<string | null>(null)
   
   // Sesión activa (entrenamiento en curso a partir de plantilla)
   const [sesionActiva, setSesionActiva] = useState<{
@@ -66,6 +68,21 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
       }
     }
   }, [plantillaAIniciar, plantillas])
+
+  // Sincronizar tiempos de descanso en Supabase
+  async function handleSincronizarDescansos() {
+    setSincronizando(true)
+    setMensajeSync(null)
+    try {
+      const result = await sincronizarDescansos()
+      setMensajeSync(result.mensaje)
+      setTimeout(() => setMensajeSync(null), 4000)
+    } catch (e) {
+      setMensajeSync('Error al sincronizar')
+    } finally {
+      setSincronizando(false)
+    }
+  }
 
   // Datos para la gráfica de progresión
   const datosGrafica = rutinasIniciales
@@ -229,6 +246,24 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
       {/* VISTA DE PLANTILLAS Y RUTINAS */}
       {tabActiva === 'plantillas' && (
         <div className="space-y-6 mt-6">
+          {/* Barra de sincronización de descansos */}
+          <div className="flex items-center justify-between p-3 rounded-xl border" style={{ background: 'rgba(16,185,129,0.04)', borderColor: 'rgba(16,185,129,0.15)' }}>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">⏱️ Tiempos de descanso configurados para cada ejercicio</span>
+              {mensajeSync && (
+                <span className="text-xs text-emerald-400 font-medium">{mensajeSync}</span>
+              )}
+            </div>
+            <button
+              onClick={handleSincronizarDescansos}
+              disabled={sincronizando}
+              className="btn btn-ghost btn-sm text-xs py-1 px-3 flex items-center gap-1.5"
+              style={{ color: '#34d399', borderColor: 'rgba(16,185,129,0.3)' }}
+            >
+              {sincronizando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+              Sincronizar descansos
+            </button>
+          </div>
           {plantillas.map(p => {
             const esExpandido = diaExpandido === p.id
             const esEditando = editandoPlantillaId === p.id
@@ -549,23 +584,38 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
                     ej.completado ? 'bg-neutral-900/60 border-neutral-800' : 'bg-neutral-950/20 border-transparent opacity-50'
                   }`}
                 >
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                    {/* Ejercicio name y toggle */}
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={ej.completado}
-                        onChange={e => {
-                          const copy = [...sesionActiva.ejercicios]
-                          copy[index].completado = e.target.checked
-                          setSesionActiva(prev => prev ? { ...prev, ejercicios: copy } : null)
-                        }}
-                        className="w-4 h-4 rounded text-emerald-500 focus:ring-0 cursor-pointer"
-                      />
-                      <div>
-                        <p className="font-semibold text-sm text-neutral-200">{ej.nombre}</p>
-                        <p className="text-[10px] text-neutral-500">Plantilla: {ej.series}x{ej.repeticiones} | {ej.peso_kg > 0 ? `${ej.peso_kg}kg` : 'Libre'}</p>
+                  <div className="flex flex-col gap-2.5">
+                    {/* Fila superior: checkbox + nombre + badge descanso */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={ej.completado}
+                          onChange={e => {
+                            const copy = [...sesionActiva.ejercicios]
+                            copy[index].completado = e.target.checked
+                            setSesionActiva(prev => prev ? { ...prev, ejercicios: copy } : null)
+                          }}
+                          className="w-4 h-4 rounded text-emerald-500 focus:ring-0 cursor-pointer shrink-0"
+                        />
+                        <div>
+                          <p className="font-semibold text-sm text-neutral-200">{ej.nombre}</p>
+                          <p className="text-[10px] text-neutral-500">Plantilla: {ej.series}x{ej.repeticiones} | {ej.peso_kg > 0 ? `${ej.peso_kg}kg` : 'Libre'}</p>
+                        </div>
                       </div>
+                      {/* Badge de descanso */}
+                      {ej.descanso && (
+                        <div
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold shrink-0"
+                          style={{
+                            background: 'rgba(251,191,36,0.12)',
+                            border: '1px solid rgba(251,191,36,0.25)',
+                            color: '#fbbf24',
+                          }}
+                        >
+                          ⏱️ <span>Desc: {ej.descanso}</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Inputs de series/peso/reps */}
