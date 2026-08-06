@@ -74,7 +74,18 @@ export async function getAuthenticatedAuthClient() {
 
       console.log('[getAuthenticatedAuthClient] Access token refreshed successfully.')
     } catch (err: any) {
-      console.error('[getAuthenticatedAuthClient] Error refreshing token:', err.message)
+      console.warn('[getAuthenticatedAuthClient] Error refreshing token:', err.message)
+      // Si el refresh token no es válido o ha expirado (ej. "invalid_grant"), eliminamos la credencial para permitir reconectar
+      try {
+        const supabase = await createClient()
+        await supabase
+          .from('google_credentials')
+          .delete()
+          .eq('id', creds.id)
+        console.log('[getAuthenticatedAuthClient] Invalid credentials deleted from database.')
+      } catch (dbErr: any) {
+        console.warn('[getAuthenticatedAuthClient] Error cleaning up credentials:', dbErr.message)
+      }
       return null
     }
   }
@@ -173,3 +184,72 @@ export async function eliminarEventoGoogle(eventId: string): Promise<boolean> {
     return false
   }
 }
+
+// 4. Obtener todos los eventos de Google Calendar
+export async function obtenerEventosGoogle(): Promise<Item[]> {
+  const auth = await getAuthenticatedAuthClient()
+  if (!auth) {
+    console.log('[obtenerEventosGoogle] Google is not connected or auth client is not available.')
+    return []
+  }
+
+  try {
+    const calendar = google.calendar({ version: 'v3', auth })
+    // Recuperar eventos desde 30 días en el pasado hasta 365 días en el futuro
+    const timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const timeMax = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: 'startTime',
+    })
+
+    const googleEvents = response.data.items || []
+
+    return googleEvents.map(event => {
+      const fechaInicioStr = event.start?.dateTime || event.start?.date || ''
+      const fechaFinStr = event.end?.dateTime || event.end?.date || ''
+
+      let hora_inicio: string | undefined = undefined
+      let hora_fin: string | undefined = undefined
+
+      if (event.start?.dateTime) {
+        const dateObj = new Date(event.start.dateTime)
+        const hrs = String(dateObj.getHours()).padStart(2, '0')
+        const mins = String(dateObj.getMinutes()).padStart(2, '0')
+        hora_inicio = `${hrs}:${mins}`
+      }
+      if (event.end?.dateTime) {
+        const dateObj = new Date(event.end.dateTime)
+        const hrs = String(dateObj.getHours()).padStart(2, '0')
+        const mins = String(dateObj.getMinutes()).padStart(2, '0')
+        hora_fin = `${hrs}:${mins}`
+      }
+
+      return {
+        id: `google-${event.id}`,
+        tipo: 'evento',
+        titulo: event.summary || '(Sin título)',
+        descripcion: event.description || '',
+        estado: 'activo',
+        prioridad: 'media',
+        fecha_evento: fechaInicioStr,
+        hora_inicio,
+        hora_fin,
+        etiquetas: ['Google Calendar'],
+        origen: 'google-calendar',
+        metadata: {},
+        google_event_id: event.id || null,
+        created_at: event.created || new Date().toISOString(),
+        updated_at: event.updated || new Date().toISOString(),
+      } as Item
+    })
+  } catch (err: any) {
+    console.error('[obtenerEventosGoogle] Error fetching events:', err.message)
+    return []
+  }
+}
+

@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { Dumbbell, Plus, Trash2, TrendingUp, Loader2, Check, Edit2, Play, ChevronDown, ChevronUp, Save, X } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import type { RutinaGym, PlantillaGym, EjercicioPlantilla } from '@/lib/types'
-import { formatFecha } from '@/lib/utils'
+import { formatFecha, actualizarNotasPlantilla } from '@/lib/utils'
 import { crearRutinaGym, eliminarRutinaGym, guardarPlantillaGym, registrarSesionCompleta, sincronizarDescansos } from '@/lib/actions/health'
 
 interface GymClientProps {
@@ -27,6 +27,10 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
 
   // Gestión de plantillas
   const [plantillas, setPlantillas] = useState<PlantillaGym[]>(plantillasIniciales)
+
+  useEffect(() => {
+    setPlantillas(plantillasIniciales)
+  }, [plantillasIniciales])
   const [diaExpandido, setDiaExpandido] = useState<string | null>(plantillasIniciales[0]?.id ?? null)
   const [editandoPlantillaId, setEditandoPlantillaId] = useState<string | null>(null)
   const [ejerciciosEditables, setEjerciciosEditables] = useState<any[]>([])
@@ -165,7 +169,33 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
     if (!sesionActiva) return
     setGuardando(true)
     try {
-      await registrarSesionCompleta(sesionActiva.fecha, sesionActiva.ejercicios)
+      await registrarSesionCompleta(sesionActiva.fecha, sesionActiva.ejercicios, sesionActiva.plantillaId)
+      
+      // Actualizar estado reactivo local con la progresión del entrenamiento finalizado
+      setPlantillas(prev => prev.map(p => {
+        if (p.id === sesionActiva.plantillaId) {
+          const ejerciciosActualizados = p.ejercicios.map(ejOriginal => {
+            const ejSesion = sesionActiva.ejercicios.find(e => e.nombre === ejOriginal.nombre && e.completado)
+            if (ejSesion) {
+              const pesoGuardar = ejSesion.pesoLog !== '' && !isNaN(parseFloat(ejSesion.pesoLog))
+                ? parseFloat(ejSesion.pesoLog)
+                : ejOriginal.peso_kg
+
+              return {
+                ...ejOriginal,
+                series: parseInt(ejSesion.seriesLog) || ejOriginal.series,
+                repeticiones: ejSesion.repeticionesLog || ejOriginal.repeticiones,
+                peso_kg: pesoGuardar,
+                notas: actualizarNotasPlantilla(ejOriginal.notas, ejSesion.notasLog)
+              }
+            }
+            return ejOriginal
+          })
+          return { ...p, ejercicios: ejerciciosActualizados }
+        }
+        return p
+      }))
+
       setSesionActiva(null)
       setTabActiva('historial')
     } catch (e) {
@@ -200,44 +230,65 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
         
         {/* Selector de Pestañas */}
         <div
-          className="flex gap-1 p-1 rounded-2xl"
+          className="flex gap-1.5 p-1 rounded-xl shadow-inner backdrop-blur-md"
           style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.06)',
+            background: 'rgba(255, 255, 255, 0.02)',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
           }}
         >
           <button
             onClick={() => setTabActiva('plantillas')}
-            className="relative flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200"
+            className="group relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer select-none border"
             style={
               tabActiva === 'plantillas'
                 ? {
-                    background: 'linear-gradient(135deg, rgba(16,185,129,0.18) 0%, rgba(16,185,129,0.08) 100%)',
+                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.04) 100%)',
                     color: '#34d399',
-                    border: '1px solid rgba(16,185,129,0.2)',
-                    boxShadow: '0 2px 12px rgba(16,185,129,0.12)',
+                    borderColor: 'rgba(16, 185, 129, 0.25)',
+                    boxShadow: '0 4px 15px rgba(16, 185, 129, 0.12)',
                   }
-                : { color: 'var(--text-muted)', border: '1px solid transparent' }
+                : {
+                    color: 'var(--text-secondary)',
+                    borderColor: 'transparent',
+                    background: 'transparent',
+                  }
             }
           >
-            <Dumbbell className="w-3.5 h-3.5" style={{ opacity: tabActiva === 'plantillas' ? 1 : 0.5 }} />
+            <Dumbbell 
+              className="w-4 h-4 transition-all duration-300 transform group-hover:scale-110" 
+              style={{ 
+                color: tabActiva === 'plantillas' ? '#34d399' : 'var(--text-muted)',
+                opacity: tabActiva === 'plantillas' ? 1 : 0.6 
+              }} 
+            />
             <span>Mis Rutinas</span>
           </button>
+          
           <button
             onClick={() => setTabActiva('historial')}
-            className="relative flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200"
+            className="group relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer select-none border"
             style={
               tabActiva === 'historial'
                 ? {
-                    background: 'linear-gradient(135deg, rgba(139,92,246,0.18) 0%, rgba(139,92,246,0.08) 100%)',
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.04) 100%)',
                     color: '#a78bfa',
-                    border: '1px solid rgba(139,92,246,0.2)',
-                    boxShadow: '0 2px 12px rgba(139,92,246,0.12)',
+                    borderColor: 'rgba(139, 92, 246, 0.25)',
+                    boxShadow: '0 4px 15px rgba(139, 92, 246, 0.12)',
                   }
-                : { color: 'var(--text-muted)', border: '1px solid transparent' }
+                : {
+                    color: 'var(--text-secondary)',
+                    borderColor: 'transparent',
+                    background: 'transparent',
+                  }
             }
           >
-            <TrendingUp className="w-3.5 h-3.5" style={{ opacity: tabActiva === 'historial' ? 1 : 0.5 }} />
+            <TrendingUp 
+              className="w-4 h-4 transition-all duration-300 transform group-hover:scale-110" 
+              style={{ 
+                color: tabActiva === 'historial' ? '#a78bfa' : 'var(--text-muted)',
+                opacity: tabActiva === 'historial' ? 1 : 0.6 
+              }} 
+            />
             <span>Historial & Gráficas</span>
           </button>
         </div>

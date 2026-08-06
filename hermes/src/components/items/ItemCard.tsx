@@ -33,6 +33,7 @@ export default function ItemCard({
   const tipoConf = TIPO_CONFIG[item.tipo]
   const priorConf = PRIORIDAD_CONFIG[item.prioridad]
   const hecho = item.estado === 'hecho'
+  const isGoogleCalendar = item.origen === 'google-calendar'
 
   async function handleAccion(accion: 'hecho' | 'archivar' | 'eliminar') {
     setLoading(accion)
@@ -77,18 +78,24 @@ export default function ItemCard({
 
       <div className="flex items-start gap-3">
         {/* Toggle hecho */}
-        <button
-          onClick={() => handleAccion('hecho')}
-          disabled={!!loading}
-          className="mt-0.5 flex-shrink-0 transition-colors"
-          style={{ color: hecho ? '#10b981' : 'var(--text-muted)' }}
-          title={hecho ? 'Marcar como activo' : 'Marcar como hecho'}
-        >
-          {hecho
-            ? <CheckCircle2 style={{ width: 20, height: 20 }} />
-            : <Circle style={{ width: 20, height: 20 }} />
-          }
-        </button>
+        {!isGoogleCalendar ? (
+          <button
+            onClick={() => handleAccion('hecho')}
+            disabled={!!loading}
+            className="mt-0.5 flex-shrink-0 transition-colors"
+            style={{ color: hecho ? '#10b981' : 'var(--text-muted)' }}
+            title={hecho ? 'Marcar como activo' : 'Marcar como hecho'}
+          >
+            {hecho
+              ? <CheckCircle2 style={{ width: 20, height: 20 }} />
+              : <Circle style={{ width: 20, height: 20 }} />
+            }
+          </button>
+        ) : (
+          <div className="mt-0.5 flex-shrink-0 text-indigo-400" title="Evento de Google Calendar">
+            <Calendar style={{ width: 20, height: 20 }} />
+          </div>
+        )}
 
         {/* Contenido */}
         <div className="flex-1 min-w-0">
@@ -204,57 +211,59 @@ export default function ItemCard({
         </div>
 
         {/* Acciones — visibles con opacidad en móvil, en hover en desktop */}
-        <div
-          className="flex items-center gap-1 flex-shrink-0 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-          style={{ marginTop: 2 }}
-        >
-          {onRemoveFromMyDay && (
+        {!isGoogleCalendar && (
+          <div
+            className="flex items-center gap-1 flex-shrink-0 opacity-70 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+            style={{ marginTop: 2 }}
+          >
+            {onRemoveFromMyDay && (
+              <button
+                onClick={() => onRemoveFromMyDay(item.id)}
+                className="rounded-lg transition-colors"
+                style={{ padding: '6px 8px', color: 'var(--text-muted)' }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+                title="Quitar de Mi Día"
+              >
+                <MinusCircle style={{ width: 16, height: 16 }} />
+              </button>
+            )}
+            {onEdit && (
+              <button
+                onClick={() => onEdit(item)}
+                className="rounded-lg transition-colors"
+                style={{ padding: '6px 8px', color: 'var(--text-muted)' }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+                title="Editar"
+              >
+                <ChevronRight style={{ width: 16, height: 16 }} />
+              </button>
+            )}
             <button
-              onClick={() => onRemoveFromMyDay(item.id)}
+              onClick={() => handleAccion('archivar')}
+              disabled={!!loading}
               className="rounded-lg transition-colors"
               style={{ padding: '6px 8px', color: 'var(--text-muted)' }}
-              onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+              onMouseEnter={e => (e.currentTarget.style.color = '#94a3b8')}
               onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-              title="Quitar de Mi Día"
+              title="Archivar"
             >
-              <MinusCircle style={{ width: 16, height: 16 }} />
+              <Archive style={{ width: 16, height: 16 }} />
             </button>
-          )}
-          {onEdit && (
             <button
-              onClick={() => onEdit(item)}
+              onClick={() => handleAccion('eliminar')}
+              disabled={!!loading}
               className="rounded-lg transition-colors"
               style={{ padding: '6px 8px', color: 'var(--text-muted)' }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
               onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-              title="Editar"
+              title="Eliminar"
             >
-              <ChevronRight style={{ width: 16, height: 16 }} />
+              <Trash2 style={{ width: 16, height: 16 }} />
             </button>
-          )}
-          <button
-            onClick={() => handleAccion('archivar')}
-            disabled={!!loading}
-            className="rounded-lg transition-colors"
-            style={{ padding: '6px 8px', color: 'var(--text-muted)' }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#94a3b8')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-            title="Archivar"
-          >
-            <Archive style={{ width: 16, height: 16 }} />
-          </button>
-          <button
-            onClick={() => handleAccion('eliminar')}
-            disabled={!!loading}
-            className="rounded-lg transition-colors"
-            style={{ padding: '6px 8px', color: 'var(--text-muted)' }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-            title="Eliminar"
-          >
-            <Trash2 style={{ width: 16, height: 16 }} />
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

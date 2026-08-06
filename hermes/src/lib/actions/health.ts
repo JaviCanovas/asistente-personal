@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { RutinaGym, PlantillaGym } from '@/lib/types'
+import { actualizarNotasPlantilla } from '@/lib/utils'
 
 function isSupabaseConfigured() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
@@ -233,23 +234,66 @@ export async function crearRutinaGym(data: {
   return rutina as RutinaGym
 }
 
-export async function registrarSesionCompleta(fecha: string, ejercicios: any[]) {
+export async function registrarSesionCompleta(fecha: string, ejercicios: any[], plantillaId?: string) {
   if (!isSupabaseConfigured()) return
   const supabase = createAdminClient()
   
   // Registrar cada ejercicio en la sesión de forma secuencial
   for (const ej of ejercicios) {
     if (ej.completado) {
+      const pesoValue = ej.pesoLog !== '' && !isNaN(parseFloat(ej.pesoLog))
+        ? parseFloat(ej.pesoLog)
+        : (ej.peso_kg ?? null)
+
       await supabase.from('rutinas_gym').insert({
         fecha,
         ejercicio: ej.nombre,
         series: parseInt(ej.seriesLog) || ej.series,
         repeticiones: parseInt(ej.repeticionesLog) || parseInt(ej.repeticiones) || null,
-        peso_kg: parseFloat(ej.pesoLog) || ej.peso_kg || null,
+        peso_kg: pesoValue,
         notas: ej.notasLog || ej.notas || null
       })
     }
   }
+
+  // Si se proporciona plantillaId, actualizar la plantilla con los nuevos valores de la sesión
+  if (plantillaId) {
+    // 1. Obtener la plantilla actual
+    const { data: plantilla, error: fetchError } = await supabase
+      .from('plantillas_gym')
+      .select('*')
+      .eq('id', plantillaId)
+      .single()
+
+    if (!fetchError && plantilla) {
+      // 2. Modificar sus ejercicios con los datos guardados de los ejercicios completados
+      const ejerciciosActualizados = (plantilla.ejercicios as any[]).map((ejOriginal: any) => {
+        // Buscar si este ejercicio fue completado en la sesión
+        const ejSesion = ejercicios.find((e: any) => e.nombre === ejOriginal.nombre && e.completado)
+        if (ejSesion) {
+          const pesoGuardar = ejSesion.pesoLog !== '' && !isNaN(parseFloat(ejSesion.pesoLog))
+            ? parseFloat(ejSesion.pesoLog)
+            : ejOriginal.peso_kg
+
+          return {
+            ...ejOriginal,
+            series: parseInt(ejSesion.seriesLog) || ejOriginal.series,
+            repeticiones: ejSesion.repeticionesLog || ejOriginal.repeticiones,
+            peso_kg: pesoGuardar,
+            notas: actualizarNotasPlantilla(ejOriginal.notas, ejSesion.notasLog)
+          }
+        }
+        return ejOriginal
+      })
+
+      // 3. Guardar en plantillas_gym
+      await supabase
+        .from('plantillas_gym')
+        .update({ ejercicios: ejerciciosActualizados })
+        .eq('id', plantillaId)
+    }
+  }
+
   revalidatePath('/gym')
 }
 

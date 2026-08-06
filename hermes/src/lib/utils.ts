@@ -91,3 +91,35 @@ export function truncate(text: string, maxLength = 80): string {
   if (text.length <= maxLength) return text
   return text.slice(0, maxLength).trimEnd() + '…'
 }
+
+// ——— Actualizar las notas de la plantilla del gimnasio ———————
+export function actualizarNotasPlantilla(notaOriginal: string | undefined, notaLog: string): string {
+  const logTrimmed = notaLog.trim()
+  if (!logTrimmed) return notaOriginal || ''
+  
+  const orig = (notaOriginal || '').trim()
+  if (!orig) return logTrimmed
+
+  // Si el valor ingresado es exactamente igual a la nota original, no cambiamos nada
+  if (logTrimmed === orig) return orig
+
+  const parts = orig.split('|').map(p => p.trim())
+  const lastPart = parts[parts.length - 1]
+
+  // Comprobamos si la última parte parece un registro de repeticiones (ej: "6-6-5-5", "12-", "8-8", "15 rep/lado")
+  // Es un log si consiste principalmente de números, guiones, espacios, comas, o contiene la palabra "rep"
+  const isRepLog = /^[0-9\s\-+,x]*(rep[s]?)?$/i.test(lastPart) || lastPart.toLowerCase().includes('rep')
+
+  if (isRepLog && parts.length > 1) {
+    // Reemplazar la última parte del log
+    parts[parts.length - 1] = logTrimmed
+    return parts.join(' | ')
+  } else if (isRepLog && parts.length === 1) {
+    // Si solo era un log de reps, lo reemplazamos por el nuevo
+    return logTrimmed
+  } else {
+    // Si no parece un log de reps, lo añadimos al final respetando la estructura
+    return `${orig} | ${logTrimmed}`
+  }
+}
+

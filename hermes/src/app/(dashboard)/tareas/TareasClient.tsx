@@ -40,14 +40,14 @@ export default function TareasClient({ tareas, proyectos }: { tareas: Item[]; pr
       </div>
 
       {/* Filtros */}
-      <div className="flex flex-col sm:flex-row gap-2.5 mb-6">
+      <div className="flex flex-col gap-2.5 mb-6">
         <input
           value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
-          className="input flex-1 min-w-[140px]"
+          className="input w-full"
           placeholder="Buscar…"
         />
-        <div className="flex gap-1 overflow-x-auto pb-1.5 sm:pb-0 scrollbar-none shrink-0">
+        <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-none">
           {FILTROS_ESTADO.map(f => (
             <button
               key={f.value}
@@ -62,7 +62,7 @@ export default function TareasClient({ tareas, proyectos }: { tareas: Item[]; pr
             </button>
           ))}
         </div>
-        <select value={proyectoFiltro} onChange={e => setProyectoFiltro(e.target.value)} className="input sm:w-44 shrink-0">
+        <select value={proyectoFiltro} onChange={e => setProyectoFiltro(e.target.value)} className="input w-full">
           <option value="" style={{ background: '#1a1d26' }}>Todos los proyectos</option>
           {proyectos.map(p => <option key={p.id} value={p.id} style={{ background: '#1a1d26' }}>{p.nombre}</option>)}
         </select>
