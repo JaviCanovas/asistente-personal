@@ -82,14 +82,25 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
     return eachDayOfInterval({ start: inicio, end: fin })
   }, [fechaActual])
 
-  // Obtener items por día
+  // Obtener items por día (soporta eventos de día único y rangos de fechas de inicio a fin)
   const getItemsDelDia = (dia: Date) => {
+    const diaStart = Date.UTC(dia.getFullYear(), dia.getMonth(), dia.getDate())
+
     return eventos.filter(item => {
-      const fechaStr = item.tipo === 'evento' ? item.fecha_evento : item.fecha_limite
-      if (!fechaStr) return false
+      const fechaInicioStr = item.tipo === 'evento' ? item.fecha_evento : item.fecha_limite
+      if (!fechaInicioStr) return false
       try {
-        const itemFecha = parseISO(fechaStr)
-        return isSameDay(itemFecha, dia)
+        const itemInicioObj = parseISO(fechaInicioStr)
+        const inicioTime = Date.UTC(itemInicioObj.getFullYear(), itemInicioObj.getMonth(), itemInicioObj.getDate())
+
+        const fechaFinStr = item.fecha_limite || item.fecha_evento
+        if (fechaFinStr && fechaFinStr !== fechaInicioStr) {
+          const itemFinObj = parseISO(fechaFinStr)
+          const finTime = Date.UTC(itemFinObj.getFullYear(), itemFinObj.getMonth(), itemFinObj.getDate())
+          return diaStart >= inicioTime && diaStart <= finTime
+        }
+
+        return inicioTime === diaStart
       } catch {
         return false
       }

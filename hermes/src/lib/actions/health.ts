@@ -62,8 +62,9 @@ const PLANTILLAS_PREDEFINIDAS = [
       { nombre: 'Remo Agarre Cerrado/Gironda', series: 4, repeticiones: '10-12', peso_kg: 40, descanso: '90 seg', notas: 'RIR 1 | 12-12-11' },
       { nombre: 'Jalón al Pecho', series: 3, repeticiones: '10-12', peso_kg: 45, descanso: '90 seg', notas: 'RIR 1 | 12-12-' },
       { font: '', nombre: 'Face Pull (Polea Alta)', series: 3, repeticiones: '15-20', peso_kg: 25, descanso: '60 seg', notas: 'RIR 0 | 15-15-' },
-      { nombre: 'Bíceps Banco Scott', series: 3, repeticiones: '12-15', peso_kg: 15, descanso: '60 seg', notas: 'RIR 0' },
-      { nombre: 'Superserie: Bíceps Curl Alterno + Abs Polea Alta Crunch', series: 3, repeticiones: 'Bíceps: 10-12 / Abs: 15-20', peso_kg: 10, descanso: '60-90 seg', notas: 'Descanso al terminar ambos' }
+      { nombre: 'Bíceps Curl', series: 3, repeticiones: '10-12', peso_kg: 10, descanso: '90 seg', notas: 'RIR 0-1' },
+      { nombre: 'Bíceps Banco Scott', series: 3, repeticiones: '12-15', peso_kg: 20, descanso: '60 seg', notas: 'Superserie / Drop set (bajando peso conforme fallo)' },
+      { nombre: 'Máquina Guiada Abdominales', series: 3, repeticiones: '10-12', peso_kg: 50, descanso: '60 seg', notas: 'RIR 0-1' }
     ]
   }
 ]
@@ -94,7 +95,9 @@ const DESCANSOS_POR_EJERCICIO: Record<string, string> = {
   'Remo Agarre Cerrado/Gironda': '90 seg',
   'Jalón al Pecho': '90 seg',
   'Face Pull (Polea Alta)': '60 seg',
+  'Bíceps Curl': '90 seg',
   'Bíceps Banco Scott': '60 seg',
+  'Máquina Guiada Abdominales': '60 seg',
   'Superserie: Bíceps Curl Alterno + Abs Polea Alta Crunch': '60-90 seg',
 }
 

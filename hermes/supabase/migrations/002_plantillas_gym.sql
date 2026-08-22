@@ -47,6 +47,7 @@ INSERT INTO plantillas_gym (nombre_dia, orden, ejercicios) VALUES
     {"nombre": "Remo Agarre Cerrado/Gironda", "series": 4, "repeticiones": "10-12", "peso_kg": 40, "descanso": "90 seg", "notas": "RIR 1 | 12-12-11"},
     {"nombre": "Jalón al Pecho", "series": 3, "repeticiones": "10-12", "peso_kg": 45, "descanso": "90 seg", "notas": "RIR 1 | 12-12-"},
     {"nombre": "Face Pull (Polea Alta)", "series": 3, "repeticiones": "15-20", "peso_kg": 25, "descanso": "60 seg", "notas": "RIR 0 | 15-15-"},
-    {"nombre": "Bíceps Banco Scott", "series": 3, "repeticiones": "12-15", "peso_kg": 15, "descanso": "60 seg", "notas": "RIR 0"},
-    {"nombre": "Superserie: Bíceps Curl Alterno + Abs Polea Alta Crunch", "series": 3, "repeticiones": "Bíceps: 10-12 / Abs: 15-20", "peso_kg": 10, "descanso": "60-90 seg", "notas": "Descanso al terminar ambos"}
+    {"nombre": "Bíceps Curl", "series": 3, "repeticiones": "10-12", "peso_kg": 10, "descanso": "90 seg", "notas": "RIR 0-1"},
+    {"nombre": "Bíceps Banco Scott", "series": 3, "repeticiones": "12-15", "peso_kg": 20, "descanso": "60 seg", "notas": "Superserie / Drop set (bajando peso conforme fallo)"},
+    {"nombre": "Máquina Guiada Abdominales", "series": 3, "repeticiones": "10-12", "peso_kg": 50, "descanso": "60 seg", "notas": "RIR 0-1"}
   ]'::jsonb);

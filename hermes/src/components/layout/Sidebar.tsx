@@ -17,6 +17,7 @@ import {
   Settings,
   Sun,
   Lightbulb,
+  Clock,
 } from 'lucide-react'
 import { checkGoogleConnection } from '@/lib/actions/health'
 
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/',                 label: 'Inicio',           icon: Home,        color: '#a78bfa' },
   { href: '/mi-dia',           label: 'Mi Día',           icon: Sun,         color: '#f59e0b' },
   { href: '/inbox',            label: 'Bandeja',          icon: Inbox,       color: '#60a5fa' },
+  { href: '/horario',          label: 'Horario',          icon: Clock,       color: '#EDA900' },
   { href: '/calendario',       label: 'Calendario',       icon: Calendar,    color: '#34d399' },
   { href: '/tareas',           label: 'Tareas',           icon: CheckSquare, color: '#a78bfa' },
   { href: '/gym',              label: 'Gimnasio',         icon: Dumbbell,    color: '#10b981' },
