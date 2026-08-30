@@ -20,9 +20,8 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [guardando, setGuardando] = useState(false)
   
-  // Formulario de ejercicio individual
   const [form, setForm] = useState({
-    ejercicio: '', series: 3, repeticiones: 10, peso_kg: 0, fecha: new Date().toISOString().split('T')[0], notes: ''
+    ejercicio: '', series: 3, repeticiones: '10', peso_kg: 0, fecha: new Date().toISOString().split('T')[0], notes: ''
   })
 
   // Gestión de plantillas
@@ -106,13 +105,13 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
       await crearRutinaGym({
         ejercicio: form.ejercicio.trim(),
         series: form.series,
-        repeticiones: form.repeticiones || undefined,
+        repeticiones: form.repeticiones?.trim() || undefined,
         peso_kg: form.peso_kg || undefined,
         fecha: form.fecha,
         notas: form.notes.trim() || undefined,
       })
       setMostrarFormulario(false)
-      setForm({ ejercicio: '', series: 3, repeticiones: 10, peso_kg: 0, fecha: new Date().toISOString().split('T')[0], notes: '' })
+      setForm({ ejercicio: '', series: 3, repeticiones: '10', peso_kg: 0, fecha: new Date().toISOString().split('T')[0], notes: '' })
     } finally {
       setGuardando(false)
     }
@@ -775,7 +774,7 @@ export default function GymClient({ rutinas: rutinasIniciales, ejerciciosUnicos,
                 </div>
                 <div>
                   <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Reps</label>
-                  <input type="number" value={form.repeticiones} onClick={e => (e.target as HTMLInputElement).select()} onChange={e => setForm(f => ({ ...f, repeticiones: parseInt(e.target.value) || 0 }))} className="input text-center" min={1} />
+                  <input type="text" value={form.repeticiones} onClick={e => (e.target as HTMLInputElement).select()} onChange={e => setForm(f => ({ ...f, repeticiones: e.target.value }))} className="input text-center" placeholder="10" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Peso (kg)</label>

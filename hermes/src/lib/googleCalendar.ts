@@ -253,3 +253,50 @@ export async function obtenerEventosGoogle(): Promise<Item[]> {
   }
 }
 
+// 5. Sincronizar todos los items pendientes
+export async function sincronizarPendientesGoogle(): Promise<void> {
+  const auth = await getAuthenticatedAuthClient()
+  if (!auth) return
+
+  const supabase = await createClient()
+
+  // Obtener items no archivados
+  const { data: items, error } = await supabase
+    .from('items')
+    .select('*')
+    .neq('estado', 'archivado')
+
+  if (error || !items) {
+    console.error('[sincronizarPendientesGoogle] Error obteniendo items:', error?.message)
+    return
+  }
+
+  // Filtrar los que no tienen ID de Google y que tienen alguna fecha
+  const pendientes = items.filter(i => !i.google_event_id && (i.fecha_evento || i.fecha_limite))
+
+  if (pendientes.length === 0) return
+
+  const calendar = google.calendar({ version: 'v3', auth })
+  
+  for (const item of pendientes) {
+    const eventData = mapearItemAEventoGoogle(item)
+    if (!eventData) continue
+    
+    try {
+      const response = await calendar.events.insert({
+        calendarId: 'primary',
+        requestBody: eventData,
+      })
+      
+      if (response.data.id) {
+        await supabase
+          .from('items')
+          .update({ google_event_id: response.data.id })
+          .eq('id', item.id)
+      }
+    } catch (err: any) {
+      console.error(`[sincronizarPendientesGoogle] Error al sincronizar "${item.titulo}":`, err.message)
+    }
+  }
+}
+

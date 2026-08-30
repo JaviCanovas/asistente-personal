@@ -219,7 +219,7 @@ export async function getEjerciciosUnicos(): Promise<string[]> {
 export async function crearRutinaGym(data: {
   ejercicio: string
   series: number
-  repeticiones?: number
+  repeticiones?: string
   peso_kg?: number
   duracion_min?: number
   fecha?: string
@@ -241,47 +241,61 @@ export async function registrarSesionCompleta(fecha: string, ejercicios: any[], 
   if (!isSupabaseConfigured()) return
   const supabase = createAdminClient()
   
-  // Registrar cada ejercicio en la sesión de forma secuencial
+  // Registrar cada ejercicio completado en el historial
   for (const ej of ejercicios) {
     if (ej.completado) {
       const pesoValue = ej.pesoLog !== '' && !isNaN(parseFloat(ej.pesoLog))
         ? parseFloat(ej.pesoLog)
         : (ej.peso_kg ?? null)
 
-      await supabase.from('rutinas_gym').insert({
+      // Guardar repeticiones como string para soportar formatos como "10-10-10-10"
+      const repsValue = ej.repeticionesLog?.trim() || ej.repeticiones || null
+
+      const { error: insertError } = await supabase.from('rutinas_gym').insert({
         fecha,
         ejercicio: ej.nombre,
         series: parseInt(ej.seriesLog) || ej.series,
-        repeticiones: parseInt(ej.repeticionesLog) || parseInt(ej.repeticiones) || null,
+        repeticiones: repsValue,
         peso_kg: pesoValue,
         notas: ej.notasLog || ej.notas || null
       })
+      if (insertError) {
+        console.error(`[registrarSesionCompleta] Error insertando ejercicio "${ej.nombre}":`, insertError.message)
+      }
     }
   }
 
   // Si se proporciona plantillaId, actualizar la plantilla con los nuevos valores de la sesión
   if (plantillaId) {
-    // 1. Obtener la plantilla actual
+    // 1. Obtener la plantilla actual desde Supabase (fuente de verdad)
     const { data: plantilla, error: fetchError } = await supabase
       .from('plantillas_gym')
       .select('*')
       .eq('id', plantillaId)
       .single()
 
-    if (!fetchError && plantilla) {
-      // 2. Modificar sus ejercicios con los datos guardados de los ejercicios completados
+    if (fetchError) {
+      console.error('[registrarSesionCompleta] Error al obtener plantilla para actualizar:', fetchError.message)
+    } else if (plantilla) {
+      // 2. Construir array actualizado con los datos reales registrados en la sesión
       const ejerciciosActualizados = (plantilla.ejercicios as any[]).map((ejOriginal: any) => {
-        // Buscar si este ejercicio fue completado en la sesión
         const ejSesion = ejercicios.find((e: any) => e.nombre === ejOriginal.nombre && e.completado)
         if (ejSesion) {
+          // Peso: usar el valor registrado en la sesión si es válido
           const pesoGuardar = ejSesion.pesoLog !== '' && !isNaN(parseFloat(ejSesion.pesoLog))
             ? parseFloat(ejSesion.pesoLog)
             : ejOriginal.peso_kg
 
+          // Series: usar el valor registrado si es válido
+          const seriesGuardar = parseInt(ejSesion.seriesLog) || ejOriginal.series
+
+          // Repeticiones: guardar como string para soportar "10-10-10-10", rangos, etc.
+          const repsGuardar = ejSesion.repeticionesLog?.trim() || ejOriginal.repeticiones
+
           return {
             ...ejOriginal,
-            series: parseInt(ejSesion.seriesLog) || ejOriginal.series,
-            repeticiones: ejSesion.repeticionesLog || ejOriginal.repeticiones,
+            series: seriesGuardar,
+            repeticiones: repsGuardar,
             peso_kg: pesoGuardar,
             notas: actualizarNotasPlantilla(ejOriginal.notas, ejSesion.notasLog)
           }
@@ -289,11 +303,18 @@ export async function registrarSesionCompleta(fecha: string, ejercicios: any[], 
         return ejOriginal
       })
 
-      // 3. Guardar en plantillas_gym
-      await supabase
+      // 3. Persistir la plantilla actualizada en Supabase
+      const { error: updateError } = await supabase
         .from('plantillas_gym')
         .update({ ejercicios: ejerciciosActualizados })
         .eq('id', plantillaId)
+
+      if (updateError) {
+        console.error('[registrarSesionCompleta] Error al actualizar plantilla con progresión:', updateError.message)
+        throw new Error(`No se pudo actualizar la plantilla: ${updateError.message}`)
+      } else {
+        console.log(`[registrarSesionCompleta] Plantilla ${plantillaId} actualizada correctamente con los nuevos pesos/reps.`)
+      }
     }
   }
 

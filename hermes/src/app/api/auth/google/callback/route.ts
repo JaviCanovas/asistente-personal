@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getOAuth2Client } from '@/lib/googleCalendar'
+import { getOAuth2Client, sincronizarPendientesGoogle } from '@/lib/googleCalendar'
 import { createClient } from '@/lib/supabase/server'
 
 export async function GET(request: NextRequest) {
@@ -53,6 +53,9 @@ export async function GET(request: NextRequest) {
       
       if (error) throw error
     }
+
+    // Disparar sincronización de eventos en segundo plano
+    sincronizarPendientesGoogle().catch(console.error)
 
     // Redirigir al usuario al Calendario tras la vinculación exitosa
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'

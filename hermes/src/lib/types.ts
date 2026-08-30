@@ -47,7 +47,7 @@ export interface RutinaGym {
   fecha: string
   ejercicio: string
   series: number
-  repeticiones?: number
+  repeticiones?: string   // TEXT en Supabase: soporta "10-10-10-10", "12-15", "45-60 seg", etc.
   peso_kg?: number
   duracion_min?: number
   notas?: string
