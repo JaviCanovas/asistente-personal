@@ -116,6 +116,11 @@ const PATRONES_CONSULTA: RegExp[] = [
   /progreso/i,
   /inbox/i,
   /sin\s+procesar/i,
+  /cómo\s+(estás|eres|te\s+va|te\s+encuentras|está\s+el|está\s+todo|amigo|vas)/i,
+  /estás\s+(bien|mal|okay|bien\s+y\s+tú|preparado|listo)/i,
+  /qué\s+(tal|todo|hace|pasa)/i,
+  /hola/i,
+  /saludos/i,
 ]
 
 function esConsultaBasica(texto: string): boolean {

@@ -93,19 +93,25 @@ export async function POST(request: NextRequest) {
 
       const groqKey = getGroqApiKey()
 
-      if (textoLower.includes('hoy') || textoLower.includes('qué tengo') || textoLower.includes('mi día')) {
-        const r = await responderConsultaHoy(msg)
-        response = { text: r.text, replyToMessageId: r.replyToMessageId }
-      } else if (textoLower.includes('tarea') || textoLower.includes('tareas')) {
-        const r = await responderConsultaTareas(msg)
-        response = { text: r.text, replyToMessageId: r.replyToMessageId }
+      // Consultas de datos: "qué tengo hoy", "tareas", "eventos"
+      if ((textoLower.includes('qué tengo') || textoLower.includes('tengo hoy') || textoLower.includes('qué hay') || textoLower.includes('qué está') || textoLower.includes('mi día') || textoLower.includes('calendario') || textoLower.includes('estado') || textoLower.includes('progreso') || textoLower.includes('inbox') || textoLower.includes('sin procesar')) && !textoLower.includes('cómo') && !textoLower.includes('hola') && !textoLower.includes('qué tal') && !textoLower.includes('saludos')) {
+        // Es una consulta de datos real
+        if (textoLower.includes('hoy') || textoLower.includes('qué tengo') || textoLower.includes('mi día')) {
+          const r = await responderConsultaHoy(msg)
+          response = { text: r.text, replyToMessageId: r.replyToMessageId }
+        } else if (textoLower.includes('tarea') || textoLower.includes('tareas')) {
+          const r = await responderConsultaTareas(msg)
+          response = { text: r.text, replyToMessageId: r.replyToMessageId }
+        } else {
+          response = { text: 'No estoy seguro de qué quieres consultar exactamente. Escribe /ayuda para ver las opciones.', replyToMessageId: msg.messageId }
+        }
       } else if (groqKey) {
-        // Consulta compleja — Groq con contexto de datos
+        // Consulta conversacional o compleja — Groq con contexto de datos
         const items = await getItemsActivos()
         const activos = items.filter(i => i.estado === 'activo' || i.estado === 'sin_procesar')
 
         const contexto = activos.length > 0
-          ? `El usuario tiene ${activos.length} items activos: ${activos.slice(0, 10).map(i => `- ${i.titulo} (${i.tipo}, ${i.prioridad}, ${i.fecha_limite || 'sin fecha'})`).join('\n')}`
+          ? `El usuario tiene ${activos.length} items activos. He aquí un resumen: ${activos.slice(0, 10).map(i => '- ' + i.titulo + ' (' + i.tipo + ', ' + i.prioridad + (i.fecha_limite ? ', vence ' + i.fecha_limite : '') + ')').join(' | ')}`
           : 'El usuario no tiene items activos.'
 
         const decision = await razonarConGroq(msg.text, groqKey, contexto)
@@ -114,7 +120,6 @@ export async function POST(request: NextRequest) {
           response = { text: decision.respuesta, replyToMessageId: msg.messageId }
         } else if (decision.accion === 'crear' && decision.titulo) {
           // Groq decidió que en realidad es crear algo, no consultar
-          // Creamos el item y respondemos
           const itemCreado = await crearItem({
             titulo: decision.titulo,
             tipo: decision.tipo || 'tarea',
@@ -122,10 +127,10 @@ export async function POST(request: NextRequest) {
             fecha_limite: decision.fecha_limite,
           })
           response = {
-            text: `✅ Guardado: "${decision.titulo}"\n📋 ${decision.tipo || 'tarea'} · ${decision.prioridad || 'media'} prioridad`,
+            text: 'Guardado: "' + decision.titulo + '"\n' + (decision.tipo || 'tarea') + ' · ' + (decision.prioridad || 'media') + ' prioridad',
             replyToMessageId: msg.messageId,
           }
-          console.log(`[Telegram] Groq decidió crear item: "${decision.titulo}"`)
+          console.log('[Telegram] Groq decidió crear item: "' + decision.titulo + '"')
         } else if (decision.pregunta) {
           response = { text: decision.pregunta, replyToMessageId: msg.messageId }
         } else {
