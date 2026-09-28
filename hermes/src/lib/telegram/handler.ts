@@ -133,8 +133,12 @@ export async function procesarMensajeTelegram(
 ): Promise<ProcesarMensajeResult> {
   const { chatId, text, messageId } = msg
 
+  console.log(`[handler] procesando mensaje de ${chatId}: "${text}"`)
+  console.log(`[handler] groqApiKey presente: ${groqApiKey ? 'si (longitud ' + groqApiKey.length + ')' : 'no'}`)
+
   // 1. Validar chat autorizado
   if (!allowedChatIds.includes(chatId)) {
+    console.log(`[handler] Chat ${chatId} NO autorizado`)
     return {
       respuesta: '⚠️ Chat no autorizado. Contacta con el administrador para activar esta cuenta.',
       esConsulta: false,
@@ -177,15 +181,20 @@ export async function procesarMensajeTelegram(
   }
 
   // 4. Intento heurístico primero (rápido)
+  console.log(`[handler] Clasificando: "${texto}"`)
   const clasificacion = clasificarItem(texto)
+  console.log(`[handler] Resultado heurístico: tipo=${clasificacion.tipo}, prioridad=${clasificacion.prioridad}, confianza=${clasificacion.confianza}, fecha_limite=${clasificacion.fecha_limite || 'ninguna'}`)
   const umbralConfirmacion = 0.6
 
   // 5. Si confianza baja → ir a Groq (razonamiento) si está disponible
   if (clasificacion.confianza < umbralConfirmacion && groqApiKey) {
-    console.log(`[Telegram] Confianza heurística baja (${clasificacion.confianza}), delegando a Groq`)
+    console.log(`[handler] Confianza baja (${clasificacion.confianza} < ${umbralConfirmacion}), llamando a Groq`)
     const decision = await razonarConGroq(texto, groqApiKey, undefined)
+    console.log(`[handler] Groq respondió: accion=${decision.accion}, titulo=${decision.titulo || 'ninguno'}`)
     return convertirDecisionAGroqResultado(decision, texto, clasificacion)
   }
+
+  console.log(`[handler] Confianza suficiente (${clasificacion.confianza}), usando heurística`)
 
   // 6. Confianza suficiente → crear item con heurística
   const prioridadMap: Record<string, ItemPrioridad> = {

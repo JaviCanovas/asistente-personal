@@ -101,7 +101,9 @@ export async function razonarConGroq(
   const clientUrl = 'https://api.groq.com/openai/v1/chat/completions'
 
   const userMessage = contextoOpcional
-    ? `Contexto adicional: ${contextoOpcional}\n\nMensaje: ${mensaje}`
+    ? `Contexto adicional: ${contextoOpcional}
+
+Mensaje: ${mensaje}`
     : mensaje
 
   const body = {
@@ -120,7 +122,7 @@ export async function razonarConGroq(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: 'Bearer ' + apiKey,
       },
       body: JSON.stringify(body),
     })
@@ -160,8 +162,8 @@ export async function razonarConGroq(
     console.error('[razonarConGroq] Error:', err.message)
     return {
       accion: 'responder',
-      respuesta: `Lo siento, estoy teniendo problemas para procesar tu mensaje. Inténtalo de nuevo o escribe /ayuda.`,
-      razon: `Error: ${err.message}`,
+      respuesta: 'Lo siento, estoy teniendo problemas para procesar tu mensaje. Inténtalo de nuevo o escribe /ayuda.',
+      razon: 'Error: ' + err.message,
     }
   }
 }

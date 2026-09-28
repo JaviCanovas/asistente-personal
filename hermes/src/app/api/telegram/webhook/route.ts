@@ -80,7 +80,11 @@ export async function POST(request: NextRequest) {
 
     const allowedChatIds = getAllowedChatIds()
     const groqApiKey = getGroqApiKey()
-    const resultado = await procesarMensajeTelegram(msg, allowedChatIds, groqApiKey ? groqApiKey : undefined)
+    console.log(`[Telegram Webhook] Recibido mensaje de chat ${msg.chatId}: "${msg.text}"`)
+    console.log(`[Telegram Webhook] allowedChatIds: ${allowedChatIds.join(',')}`)
+    console.log(`[Telegram Webhook] groqApiKey configurado: ${groqApiKey ? 'si (longitud ' + groqApiKey.length + ')' : 'no'}`)
+
+    const resultado = await procesarMensajeTelegram(msg, allowedChatIds, groqApiKey ? groqApiKey : '')
 
     // Si es consulta, fetch de datos y responder
     if (resultado.esConsulta) {
@@ -173,6 +177,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, update_processed: true })
   } catch (err: any) {
     console.error('[Telegram Webhook Error]', err)
+    console.error('[Telegram Webhook Error] Stack:', err.stack)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
   }
 }
