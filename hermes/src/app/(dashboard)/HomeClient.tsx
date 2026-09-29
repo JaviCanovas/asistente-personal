@@ -1,10 +1,14 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
-import { Play, ArrowRight, Dumbbell, CheckCircle, Circle, Calendar, Clock, Bell } from 'lucide-react'
-import type { ItemPriorizado, PlantillaGym, RutinaGym } from '@/lib/types'
-import { marcarHecho } from '@/lib/actions/items'
+import {
+  Play, ArrowRight, Dumbbell, CheckCircle2, Circle, Calendar,
+  Clock, Bell, Plus, Sparkles, Check, Flame
+} from 'lucide-react'
+import type { ItemPriorizado, PlantillaGym, RutinaGym, Item } from '@/lib/types'
+import { marcarHecho, crearItem } from '@/lib/actions/items'
+import { useToast } from '@/components/ui/Toast'
 
 interface HomeClientProps {
   priorizados: ItemPriorizado[]
@@ -12,42 +16,124 @@ interface HomeClientProps {
   rutinas: RutinaGym[]
 }
 
+function toSentenceCase(str: string): string {
+  if (!str) return ''
+  const s = str.charAt(0).toUpperCase() + str.slice(1).toLowerCase()
+  return s
+    .replace(/(:\s*)(\w)/g, (_, sep, l) => sep + l.toUpperCase())
+    .replace(/(\(\s*)(\w)/g, (_, sep, l) => sep + l.toUpperCase())
+}
+
 export default function HomeClient({
   priorizados,
   plantillas,
   rutinas,
 }: HomeClientProps) {
-  const [isPending, startTransition] = useTransition()
+  const { showToast } = useToast()
   const [itemsHoy, setItemsHoy] = useState<ItemPriorizado[]>(priorizados)
-  const hoy = new Date()
+  const [quickInput, setQuickInput] = useState('')
+  const [isCreatingQuick, setIsCreatingQuick] = useState(false)
 
-  // Formatear fecha en español: "jueves, 27 de julio"
+  const hoy = new Date()
+  const hora = hoy.getHours()
+
+  // Saludo dinámico según la hora del día
+  const saludo =
+    hora >= 6 && hora < 12
+      ? { texto: '¡Buenos días, Javier!', icono: '☀️' }
+      : hora >= 12 && hora < 20
+      ? { texto: '¡Buenas tardes, Javier!', icono: '🌤️' }
+      : { texto: '¡Buenas noches, Javier!', icono: '🌙' }
+
+  // Formato de fecha completo en español
   const opcionesFecha: Intl.DateTimeFormatOptions = {
     weekday: 'long',
-    month: 'long',
     day: 'numeric',
+    month: 'long',
   }
   const fechaFormateada = hoy.toLocaleDateString('es-ES', opcionesFecha)
+  const fechaCapitalizada = fechaFormateada.charAt(0).toUpperCase() + fechaFormateada.slice(1)
 
-  // Acciones: marcar tarea hecha en tiempo real
+  // Acciones: marcar tarea hecha con actualización optimista inmediata (<16ms)
   const handleCheckItem = (itemId: string) => {
-    startTransition(async () => {
-      try {
-        await marcarHecho(itemId)
-        // Remover de la vista o actualizar estado localmente con animación
-        setItemsHoy(prev => prev.filter(i => i.item.id !== itemId))
-      } catch (err) {
-        console.error('Error completando tarea:', err)
-      }
+    const itemTarget = itemsHoy.find(i => i.item.id === itemId)
+    if (!itemTarget) return
+
+    setItemsHoy(prev => prev.filter(i => i.item.id !== itemId))
+
+    showToast({
+      message: `Completada: "${itemTarget.item.titulo}"`,
+      type: 'success',
+      duration: 5000,
+      action: {
+        label: 'Deshacer',
+        onClick: async () => {
+          setItemsHoy(prev => [...prev, itemTarget])
+          try {
+            await marcarHecho(itemId, false)
+          } catch (e) {
+            console.error(e)
+          }
+        },
+      },
+    })
+
+    marcarHecho(itemId, true).catch(err => {
+      console.error('Error completando tarea en background:', err)
+      setItemsHoy(prev => [...prev, itemTarget])
+      showToast({ message: 'Error al guardar. Se restauró la tarea.', type: 'error' })
     })
   }
 
-  // Filtrar tareas y eventos para mostrar en Prioridades
-  const tareasHoy = itemsHoy.filter(
-    ({ item }) => item.tipo === 'tarea' && item.estado !== 'hecho'
-  )
+  // Creación rápida de tarea desde el dashboard
+  const handleQuickAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const titulo = quickInput.trim()
+    if (!titulo || isCreatingQuick) return
 
-  // --- CÁLCULO DE AGENDA DIARIA ---
+    setIsCreatingQuick(true)
+    const tempId = `temp-${Date.now()}`
+    const nuevoItem: Item = {
+      id: tempId,
+      tipo: 'tarea',
+      titulo,
+      estado: 'activo',
+      prioridad: 'media',
+      etiquetas: [],
+      origen: 'web',
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    // Actualización optimista en la lista de prioridades de hoy
+    setItemsHoy(prev => [{ item: nuevoItem, puntuacion: 10, razon: 'Creada hoy' }, ...prev])
+    setQuickInput('')
+
+    try {
+      const hoyStr = hoy.toISOString().split('T')[0]
+      const created = await crearItem({
+        titulo,
+        tipo: 'tarea',
+        estado: 'activo',
+        prioridad: 'media',
+        fecha_limite: hoyStr,
+      })
+      if (created) {
+        setItemsHoy(prev => prev.map(p => p.item.id === tempId ? { ...p, item: created } : p))
+      }
+      showToast({ message: 'Tarea añadida para hoy', type: 'success' })
+    } catch (err: any) {
+      console.error(err)
+      setItemsHoy(prev => prev.filter(p => p.item.id !== tempId))
+      showToast({ message: 'Error al crear la tarea', type: 'error' })
+    } finally {
+      setIsCreatingQuick(false)
+    }
+  }
+
+  // Filtrar tareas y agenda de hoy
+  const tareasHoy = itemsHoy.filter(({ item }) => item.tipo === 'tarea' && item.estado !== 'hecho')
   const hoyStr = hoy.toISOString().split('T')[0]
   const agendaHoy = itemsHoy.filter(({ item }) => {
     const fecha = item.fecha_evento || item.fecha_limite
@@ -55,25 +141,21 @@ export default function HomeClient({
     return fecha.startsWith(hoyStr)
   })
 
-  // Ordenar agendaHoy cronológicamente por hora_inicio
   const agendaHoyOrdenada = [...agendaHoy].sort((a, b) => {
     const horaA = a.item.hora_inicio ?? '23:59'
     const horaB = b.item.hora_inicio ?? '23:59'
     return horaA.localeCompare(horaB)
   })
 
-  // --- CÁLCULO DE GYM ---
+  // Cálculo de rutina GYM recomendada
   let plantillaRecomendada: PlantillaGym | undefined
-
   if (plantillas && plantillas.length > 0) {
     const ultimaPlantilla = getUltimaPlantillaRealizada(rutinas, plantillas)
     if (ultimaPlantilla) {
-      // Recomendar la siguiente plantilla en la secuencia
       const indexUltima = plantillas.findIndex(p => p.id === ultimaPlantilla.id)
       const indexSiguiente = (indexUltima + 1) % plantillas.length
       plantillaRecomendada = plantillas[indexSiguiente]
     } else {
-      // Fallback a recomendación por día de la semana si no hay historial
       const diaSemana = hoy.getDay()
       if (diaSemana === 0 || diaSemana === 1) {
         plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 1') || p.orden === 1) || plantillas[0]
@@ -81,90 +163,158 @@ export default function HomeClient({
         plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 2') || p.orden === 2) || plantillas[1] || plantillas[0]
       } else if (diaSemana === 4) {
         plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 3') || p.orden === 3) || plantillas[2] || plantillas[0]
-      } else if (diaSemana === 5 || diaSemana === 6) {
-        plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 4') || p.orden === 4) || plantillas[3] || plantillas[0]
       } else {
-        plantillaRecomendada = plantillas[0]
+        plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 4') || p.orden === 4) || plantillas[3] || plantillas[0]
       }
     }
   }
 
   return (
-    <div className="max-w-6xl mx-auto animate-fade-in">
-      {/* Header */}
-      <header className="mb-5 md:mb-8">
-        <p className="text-xs uppercase tracking-widest font-semibold text-slate-500 mb-1" style={{ fontFamily: 'var(--font-inter)' }}>
-          Vista general de hoy
-        </p>
-        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
-          ¡Buenos días, JC!
-        </h1>
-        <p className="text-sm text-slate-400 capitalize mt-0.5" style={{ fontFamily: 'var(--font-inter)' }}>
-          {fechaFormateada}
-        </p>
+    <div className="max-w-[1280px] mx-auto px-4 sm:px-8 space-y-6 animate-fade-in pb-12">
+      {/* Hero Header con diseño espacioso y KPIs */}
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-white/8 mb-6">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              Día productivo
+            </span>
+            <span className="text-xs text-neutral-500">·</span>
+            <span className="text-xs text-neutral-400 font-medium">{fechaCapitalizada}</span>
+          </div>
+
+          <h1 className="text-[32px] font-bold text-neutral-100 flex items-center gap-3" style={{ letterSpacing: 0, lineHeight: 1.2 }}>
+            <span>{saludo.texto}</span>
+            <span className="text-3xl">{saludo.icono}</span>
+          </h1>
+        </div>
+
+        {/* Resumen rápido de métricas (KPIs) - 32px de alto */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <Link
+            href="/tareas"
+            className="h-8 inline-flex items-center gap-2 px-3.5 rounded-xl border border-white/8 bg-neutral-900/60 hover:bg-neutral-800/80 transition-all text-xs font-semibold text-neutral-200 shadow-sm group"
+          >
+            <CheckCircle2 className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform" />
+            <span><strong className="text-white">{tareasHoy.length}</strong> tareas hoy</span>
+          </Link>
+
+          {plantillaRecomendada && (
+            <Link
+              href={`/gym?iniciar=${plantillaRecomendada.id}`}
+              className="h-8 inline-flex items-center gap-2 px-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/15 hover:bg-emerald-500/25 transition-all text-xs font-semibold text-emerald-300 shadow-sm group"
+            >
+              <Dumbbell className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+              <span>D{plantillaRecomendada.orden}: Entreno sugerido</span>
+            </Link>
+          )}
+        </div>
       </header>
 
-      {/* Grid de Paneles */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
+      {/* Input de captura rápida para el día de hoy: altura 44px, icono a 14px, pl 44px, botón a 8px del borde */}
+      <form onSubmit={handleQuickAdd} className="mb-6">
+        <div className="relative flex items-center">
+          <input
+            data-testid="input-with-icon"
+            type="text"
+            value={quickInput}
+            onChange={e => setQuickInput(e.target.value)}
+            placeholder="Añadir una tarea rápida para hoy... (pulsa Enter)"
+            className="input w-full pl-11 pr-[110px] h-11 bg-neutral-900/70 border border-white/10 rounded-xl text-sm placeholder:text-neutral-500 focus:border-purple-500/60 focus:bg-neutral-900 shadow-inner"
+          />
+          <Plus className="absolute left-[14px] w-5 h-5 text-neutral-400 pointer-events-none" />
+          <button
+            type="submit"
+            disabled={!quickInput.trim() || isCreatingQuick}
+            className="absolute right-2 h-10 min-w-[96px] px-4 rounded-xl text-xs font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center gap-1.5 shadow-md"
+          >
+            <span>Crear</span>
+          </button>
+        </div>
+      </form>
+
+      {/* Grid de Paneles Principales: align-items start */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
         
-        {/* PANEL 1: Prioridades de hoy */}
-        <section className="card flex flex-col justify-between p-4 md:p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+        {/* PANEL 1: Prioridades de Hoy */}
+        <section data-testid="card" className="card flex flex-col justify-between p-5 sm:p-6 rounded-2xl border border-white/8 hover:border-purple-500/30 transition-all shadow-lg">
           <div>
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-base font-bold text-white tracking-wide uppercase text-[0.8125rem]" style={{ letterSpacing: '0.05em' }}>
-                Prioridades de hoy
-              </h2>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800/80 text-slate-400 border border-white/5">
-                {tareasHoy.length} pendientes
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-[18px] font-semibold text-neutral-100" style={{ letterSpacing: 0, lineHeight: 1.3 }}>Prioridades de hoy</h2>
+                  <p className="text-xs text-neutral-400">Objetivos con impacto</p>
+                </div>
+              </div>
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-neutral-800 text-neutral-200 border border-white/8">
+                {tareasHoy.length}
               </span>
             </div>
 
             {tareasHoy.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
-                <CheckCircle className="w-8 h-8 text-emerald-500/80 mb-3" />
-                <p className="text-xs font-semibold text-slate-300">¡Todo completado!</p>
-                <p className="text-sm text-slate-400 mt-1 max-w-[280px]">No tienes tareas pendientes para hoy. Captura ideas o tareas en el Inbox.</p>
+              <div className="flex flex-col items-center justify-center py-10 text-center text-neutral-500">
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 text-emerald-400 mb-3 border border-emerald-500/20">
+                  <Check className="w-6 h-6 stroke-[3]" />
+                </div>
+                <p className="text-sm font-bold text-neutral-200">¡Al día con tus tareas!</p>
+                <p className="text-xs text-neutral-400 mt-1.5 max-w-[240px] leading-relaxed">
+                  No tienes tareas pendientes para hoy. Puedes agregar una arriba o relajarte.
+                </p>
               </div>
             ) : (
-              <ul className="space-y-3">
+              <ul className="space-y-2">
                 {tareasHoy.slice(0, 5).map(({ item }) => {
-                  const esAlta = item.prioridad === 'alta' || item.prioridad === 'urgente'
+                  const esUrgente = item.prioridad === 'urgente'
+                  const esAlta = item.prioridad === 'alta'
                   const esMedia = item.prioridad === 'media'
+
                   return (
                     <li
+                      data-testid="list-row"
                       key={item.id}
-                      className="group flex items-start justify-between gap-3 p-3 rounded-xl border border-white/0 hover:border-white/5 hover:bg-white/[1.5%] transition-all duration-200"
+                      className="group flex items-start justify-between gap-3.5 min-h-[48px] py-3 px-4 rounded-xl border border-white/6 bg-neutral-900/50 hover:bg-neutral-800/60 hover:border-white/12 transition-all shadow-sm"
                     >
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
                         <button
+                          type="button"
                           onClick={() => handleCheckItem(item.id)}
-                          className="mt-0.5 shrink-0 text-slate-600 hover:text-purple-400 transition-colors"
-                          disabled={isPending}
+                          className="mt-0.5 shrink-0 text-neutral-400 hover:text-emerald-400 transition-colors cursor-pointer p-0.5 rounded-full hover:bg-white/5"
+                          aria-label="Completar tarea"
                         >
-                          <Circle className="w-4.5 h-4.5 group-hover:hidden" />
-                          <CheckCircle className="w-4.5 h-4.5 hidden group-hover:block text-purple-400" />
+                          <Circle className="w-4.5 h-4.5 group-hover:hidden text-neutral-500" />
+                          <CheckCircle2 className="w-4.5 h-4.5 hidden group-hover:block text-emerald-400" />
                         </button>
-                        <div>
-                          <p className="text-sm font-medium text-slate-200 line-clamp-2 leading-snug group-hover:text-white transition-colors">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-neutral-200 line-clamp-2 leading-relaxed group-hover:text-white transition-colors">
                             {item.titulo}
                           </p>
                           {item.proyecto && (
-                            <span className="inline-block text-[10px] font-semibold mt-1 px-1.5 py-0.2 rounded" style={{ background: `${item.proyecto.color}15`, color: item.proyecto.color }}>
+                            <span
+                              className="inline-block text-xs font-semibold mt-1.5 px-2 py-0.5 rounded-md border"
+                              style={{
+                                background: `${item.proyecto.color}18`,
+                                color: item.proyecto.color,
+                                borderColor: `${item.proyecto.color}35`,
+                              }}
+                            >
                               {item.proyecto.nombre}
                             </span>
                           )}
                         </div>
                       </div>
 
-                      {/* Badge de prioridad */}
                       <span
-                        className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded shrink-0 self-start"
+                        className="text-xs font-semibold uppercase px-2.5 py-1 rounded-full shrink-0 mt-0.5"
                         style={{
-                          background: esAlta ? 'rgba(239, 68, 68, 0.08)' : esMedia ? 'rgba(245, 158, 11, 0.08)' : 'rgba(148, 163, 184, 0.08)',
-                          color: esAlta ? 'var(--status-danger)' : esMedia ? 'var(--status-warning)' : 'var(--text-muted)',
+                          background: esUrgente ? 'rgba(239, 68, 68, 0.12)' : esAlta ? 'rgba(249, 115, 22, 0.12)' : esMedia ? 'rgba(99, 102, 241, 0.12)' : 'rgba(148, 163, 184, 0.1)',
+                          color: esUrgente ? '#ef4444' : esAlta ? '#f97316' : esMedia ? '#818cf8' : '#94a3b8',
+                          border: `1px solid ${esUrgente ? 'rgba(239, 68, 68, 0.25)' : esAlta ? 'rgba(249, 115, 22, 0.25)' : esMedia ? 'rgba(99, 102, 241, 0.25)' : 'rgba(148, 163, 184, 0.15)'}`,
                         }}
                       >
-                        {item.prioridad === 'urgente' ? 'Urgente' : item.prioridad === 'media' ? 'Media' : item.prioridad === 'alta' ? 'Alta' : 'Baja'}
+                        {item.prioridad}
                       </span>
                     </li>
                   )
@@ -173,72 +323,78 @@ export default function HomeClient({
             )}
           </div>
 
-          <div className="mt-6 pt-4 border-t border-white/5">
+          <div className="mt-4 pt-4 border-t border-white/6">
             <Link
               href="/tareas"
-              className="flex items-center justify-between text-xs font-semibold text-purple-400 hover:text-purple-300 transition-colors group"
+              className="flex items-center justify-between text-xs font-semibold text-purple-400 hover:text-purple-300 transition-colors py-1 group"
             >
               <span>Ver todas las tareas</span>
-              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
             </Link>
           </div>
         </section>
 
-        {/* PANEL 2: Agenda de hoy */}
-        <section className="card flex flex-col justify-between p-4 md:p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+        {/* PANEL 2: Agenda de Hoy */}
+        <section data-testid="card" className="card flex flex-col justify-between p-5 sm:p-6 rounded-2xl border border-white/8 hover:border-sky-500/30 transition-all shadow-lg">
           <div>
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-base font-bold text-white tracking-wide uppercase text-[0.8125rem]" style={{ letterSpacing: '0.05em' }}>
-                Agenda de hoy
-              </h2>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800/80 text-slate-400 border border-white/5">
-                {agendaHoyOrdenada.length} {agendaHoyOrdenada.length === 1 ? 'evento' : 'eventos'}
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-[18px] font-semibold text-neutral-100" style={{ letterSpacing: 0, lineHeight: 1.3 }}>Agenda de hoy</h2>
+                  <p className="text-xs text-neutral-400">Eventos y compromisos</p>
+                </div>
+              </div>
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-neutral-800 text-neutral-200 border border-white/8">
+                {agendaHoyOrdenada.length}
               </span>
             </div>
 
             {agendaHoyOrdenada.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
-                <Calendar className="w-8 h-8 text-indigo-500/80 mb-3" />
-                <p className="text-xs font-semibold text-slate-300">Sin eventos hoy</p>
-                <p className="text-sm text-slate-400 mt-1 max-w-[280px]">No tienes eventos ni tareas programadas para el día de hoy.</p>
+              <div className="flex flex-col items-center justify-center py-10 text-center text-neutral-500">
+                <div className="p-3.5 rounded-2xl bg-sky-500/10 text-sky-400 mb-3 border border-sky-500/20">
+                  <Calendar className="w-6 h-6" />
+                </div>
+                <p className="text-sm font-bold text-neutral-200">Sin eventos agendados</p>
+                <p className="text-xs text-neutral-400 mt-1.5 max-w-[240px] leading-relaxed">
+                  Tu día está despejado para trabajo profundo o descanso.
+                </p>
               </div>
             ) : (
-              <ul className="space-y-3 max-h-[250px] overflow-y-auto pr-1">
+              <ul className="space-y-2 max-h-[290px] overflow-y-auto pr-1">
                 {agendaHoyOrdenada.map(({ item }) => {
                   const esEvento = item.tipo === 'evento'
                   const Icon = item.tipo === 'recordatorio' ? Bell : esEvento ? Calendar : Clock
 
                   return (
                     <li
+                      data-testid="list-row"
                       key={item.id}
-                      className="group flex items-start justify-between gap-3 p-3 rounded-xl border border-white/0 hover:border-white/5 hover:bg-white/[1.5%] transition-all duration-200"
+                      className="group flex items-start justify-between gap-3.5 min-h-[48px] py-3 px-4 rounded-xl border border-white/6 bg-neutral-900/50 hover:bg-neutral-800/60 hover:border-white/12 transition-all shadow-sm"
                     >
                       <div className="flex items-start gap-3 min-w-0">
-                        {/* Botón de completar si es tarea/recordatorio, sino icono */}
-                        {!esEvento ? (
-                          <button
-                            onClick={() => handleCheckItem(item.id)}
-                            className="mt-0.5 shrink-0 text-slate-600 hover:text-purple-400 transition-colors"
-                            disabled={isPending}
-                          >
-                            <Circle className="w-4.5 h-4.5 group-hover:hidden" />
-                            <CheckCircle className="w-4.5 h-4.5 hidden group-hover:block text-purple-400" />
-                          </button>
-                        ) : (
-                          <div className="mt-0.5 shrink-0 text-indigo-400">
-                            <Icon className="w-4.5 h-4.5" />
-                          </div>
-                        )}
+                        <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 shrink-0 mt-0.5">
+                          <Icon className="w-4 h-4" />
+                        </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-200 truncate group-hover:text-white transition-colors">
+                          <p className="text-sm font-medium text-neutral-200 truncate group-hover:text-white transition-colors">
                             {item.titulo}
                           </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider bg-slate-800/40 px-1.5 py-0.2 rounded border border-white/5">
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="text-xs text-sky-400 font-semibold px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/20">
                               {item.hora_inicio ? `${item.hora_inicio}${item.hora_fin ? ` - ${item.hora_fin}` : ''}` : 'Todo el día'}
                             </span>
                             {item.proyecto && (
-                              <span className="inline-block text-xs font-semibold mt-1 px-1.5 py-0.5 rounded" style={{ background: `${item.proyecto.color}15`, color: item.proyecto.color }}>
+                              <span
+                                className="text-xs font-semibold px-2 py-0.5 rounded-md border"
+                                style={{
+                                  background: `${item.proyecto.color}18`,
+                                  color: item.proyecto.color,
+                                  borderColor: `${item.proyecto.color}35`,
+                                }}
+                              >
                                 {item.proyecto.nombre}
                               </span>
                             )}
@@ -252,90 +408,95 @@ export default function HomeClient({
             )}
           </div>
 
-          <div className="mt-6 pt-4 border-t border-white/5">
+          <div className="mt-4 pt-4 border-t border-white/6">
             <Link
               href="/calendario"
-              className="flex items-center justify-between text-xs font-semibold text-purple-400 hover:text-purple-300 transition-colors group"
+              className="flex items-center justify-between text-xs font-semibold text-sky-400 hover:text-sky-300 transition-colors py-1 group"
             >
               <span>Ver calendario completo</span>
-              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
             </Link>
           </div>
         </section>
 
-        {/* PANEL 3: Upcoming Gym Session */}
-        <section className="card flex flex-col justify-between p-4 md:p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+        {/* PANEL 3: Próxima Sesión de GYM */}
+        <section data-testid="card" className="card flex flex-col justify-between p-5 sm:p-6 rounded-2xl border border-emerald-500/25 hover:border-emerald-500/40 transition-all shadow-lg md:col-span-2 xl:col-span-1">
           <div>
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-xs font-bold text-white tracking-widest uppercase">
-                Próxima sesión de Gym
-              </h2>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800/80 text-slate-400 border border-white/5">
-                Recomendado
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <Dumbbell className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-[18px] font-semibold text-neutral-100" style={{ letterSpacing: 0, lineHeight: 1.3 }}>Entrenamiento gym</h2>
+                  <p className="text-xs text-neutral-400">Rutina sugerida para hoy</p>
+                </div>
+              </div>
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                Sugerido
               </span>
             </div>
 
             {plantillaRecomendada ? (
               <div>
-                {/* Título de la rutina */}
-                <h3 className="text-base font-semibold text-slate-100 tracking-tight flex items-center gap-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                  <Dumbbell className="w-4 h-4 text-purple-400" />
-                  {plantillaRecomendada.nombre_dia.replace(/DÍA \d+:\s*/, '')}
-                </h3>
-                <p className="text-xs text-slate-400 font-medium mt-0.5 uppercase tracking-wide">
-                  {plantillaRecomendada.nombre_dia.split('(')[1]?.replace(')', '') || 'Programación diaria'}
-                </p>
+                <div className="py-3 px-4 rounded-xl bg-emerald-950/30 border border-emerald-500/25 mb-3 space-y-1">
+                  <p className="font-semibold text-sm sm:text-base text-neutral-100">
+                    {toSentenceCase(plantillaRecomendada.nombre_dia)}
+                  </p>
+                  <p className="text-xs text-emerald-400/90 font-medium">
+                    {plantillaRecomendada.ejercicios.length} ejercicios planificados
+                  </p>
+                </div>
 
-                {/* Lista de Ejercicios */}
-                <ul className="mt-5 space-y-3">
+                <ul className="space-y-2">
                   {plantillaRecomendada.ejercicios.slice(0, 4).map((ej, index) => (
                     <li
+                      data-testid="list-row"
                       key={index}
-                      className="flex items-center justify-between text-sm py-1.5 border-b border-white/[2.5%] last:border-b-0"
+                      className="min-h-[44px] py-2.5 px-4 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/50 border border-white/6 transition-colors shadow-sm flex items-center justify-between text-sm"
                     >
-                      <span className="font-medium text-slate-300 truncate pr-4 flex-1">
+                      <span className="font-medium text-neutral-200 truncate pr-3">
                         {ej.nombre}
                       </span>
-                      <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider shrink-0 bg-slate-800/30 px-2 py-0.5 rounded border border-white/[1.5%]">
-                        {ej.series}x{ej.repeticiones}
+                      <span className="text-xs font-semibold text-emerald-300 shrink-0 bg-emerald-500/15 px-2.5 py-1 rounded-full border border-emerald-500/25">
+                        {ej.series} × {ej.repeticiones}
                       </span>
                     </li>
                   ))}
                   {plantillaRecomendada.ejercicios.length > 4 && (
-                    <li className="text-xs text-center text-slate-400 font-medium pt-1.5">
+                    <li className="text-xs text-center text-neutral-400 font-medium pt-1">
                       + {plantillaRecomendada.ejercicios.length - 4} ejercicios más en esta sesión
                     </li>
                   )}
                 </ul>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
-                <Dumbbell className="w-8 h-8 text-slate-600 mb-3" />
-                <p className="text-xs font-semibold text-slate-300">Sin rutina configurada</p>
-                <p className="text-sm text-slate-400 mt-1 max-w-[280px]">Crea o carga tus rutinas de entrenamiento en la sección Gym.</p>
+              <div className="flex flex-col items-center justify-center py-10 text-center text-neutral-500">
+                <Dumbbell className="w-8 h-8 text-neutral-600 mb-3" />
+                <p className="text-sm font-bold text-neutral-200">Sin rutina programada</p>
+                <p className="text-xs text-neutral-400 mt-1.5 max-w-[240px]">Configura tus plantillas en la sección Gym.</p>
               </div>
             )}
           </div>
 
-          <div className="mt-6 pt-4 border-t border-white/5">
+          <div className="mt-4 pt-4 border-t border-white/6">
             {plantillaRecomendada ? (
               <Link
                 href={`/gym?iniciar=${plantillaRecomendada.id}`}
-                className="btn btn-primary w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold transition-all text-xs uppercase tracking-wider shadow-md hover:brightness-110 active:scale-[0.98]"
+                className="btn btn-primary w-full flex items-center justify-center gap-2.5 py-3 px-6 rounded-xl font-bold transition-all text-sm text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/35 hover:brightness-105 active:scale-[0.99]"
                 style={{
-                  background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
-                  boxShadow: '0 4px 12px rgba(124, 58, 237, 0.3)',
+                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                 }}
               >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Iniciar entrenamiento</span>
+                <Play className="w-4 h-4 fill-white" />
+                <span>Comenzar entrenamiento</span>
               </Link>
             ) : (
               <Link
                 href="/gym"
-                className="btn btn-ghost w-full py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider"
+                className="btn btn-ghost w-full py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-neutral-300 hover:text-white"
               >
-                Ir a Entrenamientos
+                Ver módulo Gym
               </Link>
             )}
           </div>
@@ -346,7 +507,6 @@ export default function HomeClient({
   )
 }
 
-// Función helper para determinar la última plantilla realizada en base al historial
 function getUltimaPlantillaRealizada(
   rutinas: RutinaGym[],
   plantillas: PlantillaGym[]
@@ -355,20 +515,17 @@ function getUltimaPlantillaRealizada(
     return undefined
   }
 
-  // 1. Ordenar rutinas por fecha desc y created_at desc
   const sortedRutinas = [...rutinas].sort((a, b) => {
     const dateComp = b.fecha.localeCompare(a.fecha)
     if (dateComp !== 0) return dateComp
     return (b.created_at || '').localeCompare(a.created_at || '')
   })
 
-  // 2. Agrupar las rutinas más recientes de la fecha del último entrenamiento registrado
   const ultimaFecha = sortedRutinas[0].fecha
   const ejerciciosUltimaFecha = sortedRutinas
     .filter(r => r.fecha === ultimaFecha)
     .map(r => r.ejercicio.toLowerCase().trim())
 
-  // 3. Buscar plantilla que tenga mayor coincidencia con los ejercicios de esta fecha
   let mejorPlantilla: PlantillaGym | undefined
   let maxCoincidencias = 0
 
@@ -376,13 +533,10 @@ function getUltimaPlantillaRealizada(
     let coincidencias = 0
     for (const ej of p.ejercicios) {
       const pNombre = ej.nombre.toLowerCase().trim()
-      // Coincidencia exacta o parcial
       const tieneMatch = ejerciciosUltimaFecha.some(
         ejLog => ejLog.includes(pNombre) || pNombre.includes(ejLog)
       )
-      if (tieneMatch) {
-        coincidencias++
-      }
+      if (tieneMatch) coincidencias++
     }
     if (coincidencias > maxCoincidencias) {
       maxCoincidencias = coincidencias
@@ -390,12 +544,8 @@ function getUltimaPlantillaRealizada(
     }
   }
 
-  if (mejorPlantilla && maxCoincidencias > 0) {
-    return mejorPlantilla
-  }
+  if (mejorPlantilla && maxCoincidencias > 0) return mejorPlantilla
 
-  // 4. Fallback: buscar secuencialmente hacia atrás en el historial de ejercicios
-  // el primer ejercicio que coincida de forma unívoca con alguna plantilla
   for (const r of sortedRutinas) {
     const rNombre = r.ejercicio.toLowerCase().trim()
     for (const p of plantillas) {
@@ -403,9 +553,7 @@ function getUltimaPlantillaRealizada(
         const pNombre = ej.nombre.toLowerCase().trim()
         return rNombre.includes(pNombre) || pNombre.includes(rNombre)
       })
-      if (tieneEjercicio) {
-        return p
-      }
+      if (tieneEjercicio) return p
     }
   }
 

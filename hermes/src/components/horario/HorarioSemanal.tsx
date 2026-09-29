@@ -341,7 +341,7 @@ export default function HorarioSemanal() {
             </div>
             {/* Título & Subtítulo */}
             <div className="space-y-1">
-              <h1 className="text-xl sm:text-[22px] font-bold text-[#0D4479] leading-tight tracking-tight">
+              <h1 className="text-xl sm:text-[22px] font-bold text-[#0D4479] leading-tight" style={{ letterSpacing: '0px' }}>
                 Javier Cánovas — Horario semanal
               </h1>
               <p className="text-xs sm:text-[11.5px] text-[#5B6B7C] font-medium leading-relaxed">

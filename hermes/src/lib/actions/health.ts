@@ -2,7 +2,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
-import type { RutinaGym, PlantillaGym } from '@/lib/types'
+import type { RutinaGym, PlantillaGym, SerieGym, SesionGym } from '@/lib/types'
 import { actualizarNotasPlantilla } from '@/lib/utils'
 
 function isSupabaseConfigured() {
@@ -327,6 +327,287 @@ export async function eliminarRutinaGym(id: string) {
   const { error } = await supabase.from('rutinas_gym').delete().eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/gym')
+}
+
+export interface DetalleHistorialEjercicio {
+  fecha: string
+  peso_kg: number
+  series: number
+  repeticiones: string
+  notas?: string
+  seriesDetalle: Array<{
+    numero_serie: number
+    peso_kg: number
+    repeticiones: number
+    rir?: string
+  }>
+  resumenTexto: string
+}
+
+export async function getUltimoHistorialPorEjercicio(): Promise<Record<string, DetalleHistorialEjercicio>> {
+  if (!isSupabaseConfigured()) return {}
+  const supabase = createAdminClient()
+
+  // Intentar leer de series_gym con join de sesiones_gym si existen
+  try {
+    const { data: seriesData, error: seriesError } = await supabase
+      .from('series_gym')
+      .select('ejercicio, numero_serie, peso_kg, repeticiones, rir_real, created_at, sesiones_gym (fecha)')
+      .order('created_at', { ascending: false })
+      .limit(300)
+
+    if (!seriesError && seriesData && seriesData.length > 0) {
+      const mapa: Record<string, DetalleHistorialEjercicio> = {}
+      for (const item of seriesData) {
+        const key = item.ejercicio.trim().toLowerCase()
+        const sesionFecha = (item.sesiones_gym as any)?.fecha || item.created_at?.split('T')[0] || ''
+        
+        if (!mapa[key]) {
+          mapa[key] = {
+            fecha: sesionFecha,
+            peso_kg: Number(item.peso_kg) || 0,
+            series: 1,
+            repeticiones: String(item.repeticiones),
+            seriesDetalle: [],
+            resumenTexto: ''
+          }
+        }
+        // Agrupar sólo las series de la última fecha
+        if (mapa[key].fecha === sesionFecha) {
+          mapa[key].seriesDetalle.push({
+            numero_serie: item.numero_serie,
+            peso_kg: Number(item.peso_kg) || 0,
+            repeticiones: Number(item.repeticiones) || 0,
+            rir: item.rir_real || undefined
+          })
+        }
+      }
+
+      // Ordenar series por numero_serie y generar resumenTexto
+      for (const key of Object.keys(mapa)) {
+        mapa[key].seriesDetalle.sort((a, b) => a.numero_serie - b.numero_serie)
+        mapa[key].series = mapa[key].seriesDetalle.length
+        const maxPeso = Math.max(...mapa[key].seriesDetalle.map(s => s.peso_kg), 0)
+        mapa[key].peso_kg = maxPeso
+        const repsList = mapa[key].seriesDetalle.map(s => s.repeticiones).join('-')
+        mapa[key].repeticiones = repsList
+        const primerRir = mapa[key].seriesDetalle.find(s => s.rir)?.rir
+        mapa[key].resumenTexto = `${maxPeso > 0 ? `${maxPeso} kg · ` : ''}${repsList} reps${primerRir ? ` (RIR ${primerRir})` : ''}`
+      }
+
+      if (Object.keys(mapa).length > 0) return mapa
+    }
+  } catch {
+    // Si la tabla series_gym aún no existe en Supabase, pasamos directamente a rutinas_gym
+  }
+
+  // Fallback: leer de rutinas_gym
+  const { data: rutinas, error } = await supabase
+    .from('rutinas_gym')
+    .select('*')
+    .order('fecha', { ascending: false })
+    .order('created_at', { ascending: false })
+
+  if (error || !rutinas) return {}
+
+  const mapa: Record<string, DetalleHistorialEjercicio> = {}
+
+  for (const r of rutinas) {
+    const key = r.ejercicio.trim().toLowerCase()
+    if (mapa[key]) continue // Ya guardamos el más reciente
+
+    const notas = r.notas || ''
+    const repStr = r.repeticiones || ''
+    const numSeries = r.series || 3
+    const peso = r.peso_kg || 0
+
+    // Parsear series de notas o repStr
+    const matchReps = (notas.match(/(\d+[-/]\d+[-/]\d+(?:[-/]\d+)*)/) || repStr.match(/^(\d+[-/]\d+[-/]\d+(?:[-/]\d+)*)$/))
+    const matchRir = (notas.match(/RIR\s*([0-9]+(?:-[0-9]+)?)/i) || repStr.match(/RIR\s*([0-9]+(?:-[0-9]+)?)/i))
+    const rir = matchRir ? matchRir[1] : undefined
+
+    let repsArray: number[] = []
+    if (matchReps) {
+      repsArray = matchReps[1].split(/[-/]/).map((n: string) => parseInt(n)).filter((n: number) => !isNaN(n))
+    } else {
+      const singleNum = parseInt(repStr) || parseInt(notas.match(/\b\d+\b/)?.[0] || '10')
+      repsArray = Array(numSeries).fill(singleNum)
+    }
+
+    const seriesDetalle = repsArray.slice(0, numSeries).map((reps, idx) => ({
+      numero_serie: idx + 1,
+      peso_kg: peso,
+      repeticiones: reps,
+      rir
+    }))
+
+    const repsResumen = repsArray.join('-')
+    const rirTexto = rir ? ` (RIR ${rir})` : ''
+    const resumenTexto = `${peso > 0 ? `${peso} kg · ` : ''}${repsResumen} reps${rirTexto}`
+
+    mapa[key] = {
+      fecha: r.fecha,
+      peso_kg: peso,
+      series: numSeries,
+      repeticiones: r.repeticiones || repsResumen,
+      notas: r.notas,
+      seriesDetalle,
+      resumenTexto
+    }
+  }
+
+  return mapa
+}
+
+export async function getRecordsPersonales(): Promise<Record<string, number>> {
+  if (!isSupabaseConfigured()) return {}
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.from('rutinas_gym').select('ejercicio, peso_kg')
+  if (error || !data) return {}
+
+  const prs: Record<string, number> = {}
+  for (const row of data) {
+    if (row.peso_kg && row.peso_kg > 0) {
+      const key = row.ejercicio.trim().toLowerCase()
+      if (!prs[key] || row.peso_kg > prs[key]) {
+        prs[key] = row.peso_kg
+      }
+    }
+  }
+  return prs
+}
+
+export interface SerieInput {
+  numero_serie: number
+  peso_kg: number
+  repeticiones: number
+  rir?: string
+  completada: boolean
+  notas?: string
+}
+
+export interface EjercicioSesionInput {
+  nombre: string
+  completado: boolean
+  series: SerieInput[]
+  descanso?: string
+  notasGuia?: string
+}
+
+export async function guardarSesionEstructurada(payload: {
+  fecha: string
+  plantillaId?: string
+  nombreDia: string
+  duracionSegundos?: number
+  ejercicios: EjercicioSesionInput[]
+}) {
+  if (!isSupabaseConfigured()) return { ok: false, mensaje: 'Supabase no configurado' }
+  const supabase = createAdminClient()
+
+  const ejerciciosCompletados = payload.ejercicios.filter(e => e.completado && e.series.length > 0)
+  if (ejerciciosCompletados.length === 0) {
+    return { ok: false, mensaje: 'No hay ejercicios completados para guardar' }
+  }
+
+  // 1. Intentar registrar en las nuevas tablas sesiones_gym y series_gym
+  let sesionId: string | null = null
+  try {
+    const { data: sesionData, error: sesionError } = await supabase
+      .from('sesiones_gym')
+      .insert({
+        fecha: payload.fecha,
+        plantilla_id: payload.plantillaId || null,
+        nombre_dia: payload.nombreDia,
+        estado: 'completada',
+        duracion_segundos: payload.duracionSegundos || null
+      })
+      .select('id')
+      .single()
+
+    if (!sesionError && sesionData) {
+      sesionId = sesionData.id
+      const seriesToInsert: any[] = []
+      for (const ej of ejerciciosCompletados) {
+        for (const s of ej.series) {
+          seriesToInsert.push({
+            sesion_id: sesionId,
+            ejercicio: ej.nombre,
+            numero_serie: s.numero_serie,
+            peso_kg: s.peso_kg,
+            repeticiones: s.repeticiones,
+            rir_real: s.rir || null,
+            completada: s.completada,
+            notas: s.notas || null
+          })
+        }
+      }
+      if (seriesToInsert.length > 0) {
+        await supabase.from('series_gym').insert(seriesToInsert)
+      }
+    }
+  } catch (err) {
+    console.warn('[guardarSesionEstructurada] Tablas sesiones_gym no disponibles aún, guardando en rutinas_gym:', err)
+  }
+
+  // 2. Registrar siempre en rutinas_gym (garantiza compatibilidad 100% retroactiva)
+  for (const ej of ejerciciosCompletados) {
+    const seriesCompletadas = ej.series.filter(s => s.completada)
+    const seriesUsar = seriesCompletadas.length > 0 ? seriesCompletadas : ej.series
+    const maxPeso = Math.max(...seriesUsar.map(s => s.peso_kg), 0)
+    const repsFormato = seriesUsar.map(s => s.repeticiones).join('-')
+    const rirValores = seriesUsar.map(s => s.rir).filter(Boolean)
+    const rirTexto = rirValores.length > 0 ? `RIR ${rirValores[0]}` : ''
+
+    const { error: insertError } = await supabase.from('rutinas_gym').insert({
+      fecha: payload.fecha,
+      ejercicio: ej.nombre,
+      series: seriesUsar.length,
+      repeticiones: repsFormato,
+      peso_kg: maxPeso > 0 ? maxPeso : null,
+      notas: rirTexto || null
+    })
+
+    if (insertError) {
+      console.error(`[guardarSesionEstructurada] Error insertando en rutinas_gym "${ej.nombre}":`, insertError.message)
+    }
+  }
+
+  // 3. Si viene de una plantilla, actualizar los pesos de la plantilla sin ensuciar las notas
+  if (payload.plantillaId) {
+    const { data: plantilla } = await supabase
+      .from('plantillas_gym')
+      .select('*')
+      .eq('id', payload.plantillaId)
+      .single()
+
+    if (plantilla) {
+      const ejerciciosActualizados = (plantilla.ejercicios as any[]).map((ejOriginal: any) => {
+        const ejSesion = ejerciciosCompletados.find(e => e.nombre.toLowerCase() === ejOriginal.nombre.toLowerCase())
+        if (ejSesion) {
+          const maxPesoSesion = Math.max(...ejSesion.series.map(s => s.peso_kg), 0)
+          const repsSesion = ejSesion.series.map(s => s.repeticiones).join('-')
+          const rirSesion = ejSesion.series.find(s => s.rir)?.rir
+          
+          return {
+            ...ejOriginal,
+            series: ejSesion.series.length,
+            repeticiones: repsSesion || ejOriginal.repeticiones,
+            peso_kg: maxPesoSesion > 0 ? maxPesoSesion : ejOriginal.peso_kg,
+            notas: rirSesion ? `RIR ${rirSesion}` : ejOriginal.notas
+          }
+        }
+        return ejOriginal
+      })
+
+      await supabase
+        .from('plantillas_gym')
+        .update({ ejercicios: ejerciciosActualizados })
+        .eq('id', payload.plantillaId)
+    }
+  }
+
+  revalidatePath('/gym')
+  return { ok: true, sesionId }
 }
 
 export async function checkGoogleConnection(): Promise<boolean> {

@@ -151,7 +151,7 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
             <Calendar className="w-6 h-6 text-purple-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-purple-200 via-indigo-200 to-blue-200 bg-clip-text text-transparent">Calendario</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-purple-200 via-indigo-200 to-blue-200 bg-clip-text text-transparent" style={{ letterSpacing: '0px' }}>Calendario</h1>
             <p className="text-sm text-neutral-400 font-medium">Tus eventos y tareas programadas</p>
           </div>
         </div>
@@ -205,7 +205,7 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Cuerpo del Calendario */}
-        <div className="flex-1 card p-5 overflow-hidden">
+        <div data-testid="card" className="flex-1 card p-5 overflow-hidden">
           {/* Cabecera de días de la semana */}
           <div className="grid grid-cols-7 gap-1 text-center mb-2">
             {DIAS_SEMANA.map(d => (
@@ -401,7 +401,7 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
         {/* Panel lateral: Detalle de Item o Análisis del Día Seleccionado */}
         <div className="w-full lg:w-80 shrink-0 flex flex-col gap-4">
           {itemSeleccionadoActualizado ? (
-            <div className="card p-5 animate-fade-in border-purple-500/20 shadow-lg relative overflow-hidden">
+            <div data-testid="card" className="card p-5 animate-fade-in border-purple-500/20 shadow-lg relative overflow-hidden">
               {/* Fondo decorativo sutil */}
               <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-2xl pointer-events-none" />
               
@@ -430,7 +430,7 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
               </button>
             </div>
           ) : (
-            <div className="card p-5 animate-fade-in flex flex-col gap-4 relative overflow-hidden">
+            <div data-testid="card" className="card p-5 animate-fade-in flex flex-col gap-4 relative overflow-hidden">
               {/* Fondo decorativo */}
               <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
 

@@ -19,55 +19,69 @@ export default function NotasClient({ notas, proyectos }: { notas: Item[]; proye
   )
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-12rem)] md:h-[calc(100vh-6rem)]">
+    <div className="max-w-[1280px] mx-auto flex flex-col md:flex-row gap-6 h-[calc(100vh-12rem)] md:h-[calc(100vh-6rem)] pb-6">
       {/* Lista de notas */}
-      <div className={`w-full md:w-64 flex-shrink-0 flex flex-col gap-3 ${seleccionada ? 'hidden md:flex' : 'flex'}`}>
-        <div className="flex items-center gap-2">
+      <div className={`w-full md:w-80 flex-shrink-0 flex flex-col gap-4 ${seleccionada ? 'hidden md:flex' : 'flex'}`}>
+        <div className="flex items-center gap-3">
           <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+            <Search className="absolute left-[14px] top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 pointer-events-none" />
             <input
+              data-testid="input-with-icon"
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
-              className="input pl-8 text-sm"
+              className="input w-full h-11 pl-11 pr-4 text-sm bg-neutral-900/80 border border-white/8 rounded-xl placeholder:text-neutral-500 outline-none"
               placeholder="Buscar…"
             />
           </div>
-          <button onClick={() => { setSeleccionada(null); setModalAbierto(true) }} className="btn btn-primary" style={{ padding: '9px' }}>
-            <Plus className="w-4 h-4" />
+          <button
+            onClick={() => { setSeleccionada(null); setModalAbierto(true) }}
+            className="btn btn-primary h-11 w-11 p-0 rounded-xl shrink-0 flex items-center justify-center shadow-md cursor-pointer"
+            title="Nueva nota"
+          >
+            <Plus className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-1">
-          {notasActivas.map(nota => (
-            <div
-              key={nota.id}
-              onClick={() => setSeleccionada(nota)}
-              className="rounded-lg p-3 cursor-pointer transition-all"
-              style={{
-                background: seleccionada?.id === nota.id ? 'var(--accent-muted)' : 'var(--bg-surface)',
-                border: `1px solid ${seleccionada?.id === nota.id ? 'var(--border-accent)' : 'var(--border)'}`,
-              }}
-            >
-              <p className="font-medium text-sm truncate" style={{ color: 'var(--text-primary)' }}>{nota.titulo}</p>
-              <p className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                {nota.descripcion ? truncate(nota.descripcion, 60) : 'Sin contenido'}
-              </p>
-              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                {formatFecha(nota.updated_at, 'd MMM')}
-              </p>
-            </div>
-          ))}
+        {/* 12px entre tarjetas (gap-3) */}
+        <div className="flex-1 overflow-y-auto flex flex-col gap-3 pr-1">
+          {notasActivas.map(nota => {
+            const isSel = seleccionada?.id === nota.id
+            return (
+              <div
+                key={nota.id}
+                data-testid="card"
+                onClick={() => setSeleccionada(nota)}
+                className={`card py-4 px-5 rounded-xl cursor-pointer transition-all border space-y-2 ${
+                  isSel
+                    ? 'border-purple-500/50 bg-neutral-800/80 shadow-md'
+                    : 'border-white/8 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-white/12'
+                }`}
+              >
+                {/* Título: 16px semibold */}
+                <p className="text-base font-semibold text-neutral-100 truncate">{nota.titulo}</p>
+                {/* Extracto: 14px */}
+                <p className="text-sm text-neutral-400 line-clamp-2 leading-relaxed">
+                  {nota.descripcion ? truncate(nota.descripcion, 80) : 'Sin contenido'}
+                </p>
+                {/* Fecha: 12px */}
+                <p className="text-xs text-neutral-500">
+                  {formatFecha(nota.updated_at, 'd MMM')}
+                </p>
+              </div>
+            )
+          })}
           {notasActivas.length === 0 && (
-            <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
-              <FileText className="w-8 h-8 mx-auto mb-2" />
-              <p className="text-sm">Sin notas</p>
+            <div data-testid="card" className="card empty-state text-center py-12 p-6 rounded-2xl">
+              <FileText className="w-8 h-8 mx-auto mb-2 text-neutral-600" />
+              <p className="text-sm font-semibold text-neutral-200">Sin notas</p>
+              <p className="text-xs text-neutral-500 mt-1">Crea tu primera nota con el botón +</p>
             </div>
           )}
         </div>
       </div>
 
       {/* Vista de nota */}
-      <div className={`flex-1 card p-6 overflow-y-auto ${!seleccionada ? 'hidden md:block' : 'block'}`}>
+      <div data-testid="card" className={`flex-1 card p-6 overflow-y-auto ${!seleccionada ? 'hidden md:block' : 'block'}`}>
         {seleccionada ? (
           <div>
             <div className="flex items-start justify-between mb-4 gap-2">

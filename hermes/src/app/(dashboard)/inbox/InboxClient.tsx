@@ -128,7 +128,7 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
             <Inbox className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>Bandeja de Entrada</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold" style={{ color: 'var(--text-primary)', letterSpacing: '0px' }}>Bandeja de Entrada</h1>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Captura rápida e inteligente con un solo clic</p>
           </div>
         </div>
@@ -138,7 +138,7 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
       </div>
 
       {/* Captura Rápida Premium */}
-      <div className="card p-4 mb-6" style={{ border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+      <div data-testid="card" className="card p-6 mb-6" style={{ border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <div className="relative flex flex-col gap-3">
           <textarea
             ref={textareaRef}
@@ -175,7 +175,7 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
       <div className="section-label mb-4">Clasificación Rápida</div>
 
       {itemsConSugerencias.length === 0 ? (
-        <div className="empty-state card p-10 flex flex-col items-center justify-center text-center">
+        <div data-testid="card" className="empty-state card p-10 flex flex-col items-center justify-center text-center">
           <div className="p-4 rounded-full mb-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
             <CheckCircle2 className="w-10 h-10 text-emerald-500" />
           </div>
@@ -192,6 +192,7 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
             return (
               <div
                 key={item.id}
+                data-testid="card"
                 className="card p-5 animate-fade-in transition-all duration-200 border hover:border-neutral-700 relative overflow-hidden"
                 style={{ background: 'var(--bg-surface)' }}
               >

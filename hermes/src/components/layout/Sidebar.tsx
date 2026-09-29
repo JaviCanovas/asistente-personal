@@ -53,7 +53,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
   useEffect(() => {
     checkGoogleConnection().then(setGoogleConnected).catch(() => setGoogleConnected(false))
-  }, [pathname])
+  }, [])
 
   return (
     <>
@@ -118,8 +118,8 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       `}</style>
 
       <aside
-        className={`fixed top-0 bottom-0 left-0 h-screen flex flex-col z-50 overflow-hidden transition-transform duration-300 md:translate-x-0 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed top-0 bottom-0 left-0 h-screen flex flex-col z-50 overflow-hidden transition-transform duration-300 ${
+          isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
         style={{
           width: 'var(--sidebar-width)',
@@ -128,7 +128,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
         }}
       >
         {/* Logo / Avatar */}
-        <div className="flex items-center gap-3 px-5 py-5 select-none">
+        <div className="flex items-center gap-3 px-5 pt-6 pb-4 select-none">
           <div
             className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-xs shrink-0"
             style={{
@@ -138,11 +138,11 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           >
             JC
           </div>
-          <div>
-            <p className="font-bold text-white text-sm leading-none" style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '-0.01em' }}>
+          <div className="flex flex-col justify-center">
+            <p className="font-bold text-white text-base leading-snug tracking-normal" style={{ fontFamily: 'var(--font-outfit), Outfit, sans-serif' }}>
               Hermes
             </p>
-            <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>Asistente personal</p>
+            <p className="text-[11px] leading-tight" style={{ color: 'var(--text-muted)' }}>Asistente personal</p>
           </div>
         </div>
 

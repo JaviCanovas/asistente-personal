@@ -1,9 +1,6 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  // Permitir que @fullcalendar transpile correctamente
-  transpilePackages: ['@fullcalendar/core', '@fullcalendar/react', '@fullcalendar/daygrid', '@fullcalendar/timegrid', '@fullcalendar/interaction'],
-
   // chrono-node y googleapis son módulos pesados — sólo deben ejecutarse en el servidor
   serverExternalPackages: ['chrono-node', 'googleapis'],
 

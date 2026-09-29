@@ -17,6 +17,7 @@ export interface Proyecto {
   fecha_fin?: string
   created_at: string
   updated_at: string
+  parent_id?: string | null
 }
 
 export interface Item {
@@ -68,6 +69,46 @@ export interface PlantillaGym {
   nombre_dia: string
   orden: number
   ejercicios: EjercicioPlantilla[]
+}
+
+export interface SerieGym {
+  id: string
+  sesion_id: string
+  ejercicio: string
+  numero_serie: number
+  peso_kg: number
+  repeticiones: number
+  rir_real?: string | null
+  completada: boolean
+  notas?: string | null
+  created_at?: string
+}
+
+export interface SesionGym {
+  id: string
+  plantilla_id?: string | null
+  nombre_dia: string
+  fecha: string
+  estado: 'en_progreso' | 'completada' | 'descartada'
+  duracion_segundos?: number | null
+  notas?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface SesionGymConSeries extends SesionGym {
+  series: SerieGym[]
+}
+
+export interface SugerenciaProgresion {
+  ejercicio: string
+  sugerirSubida: boolean
+  incrementoKg: number
+  pesoRecomendado: number
+  razon: string
+  esRecordPersonal: boolean
+  recordPesoAnterior: number
+  tendencia: 'up' | 'equal' | 'down'
 }
 // ============================================================
 // Tipos para la lógica heurística

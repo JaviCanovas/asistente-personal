@@ -277,7 +277,7 @@ export default function MiDiaClient({
         </p>
         <div className="flex items-center gap-3">
           <Sun className="w-7 h-7 text-purple-400" />
-          <h1 className="text-3xl font-extrabold text-white tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
+          <h1 className="text-3xl font-extrabold text-white" style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '0px' }}>
             Mi día
           </h1>
         </div>
@@ -320,11 +320,11 @@ export default function MiDiaClient({
               placeholder={`Añadir una tarea a ${tabActive === 'hoy' ? 'Hoy' : 'Mañana'}...`}
               value={nuevaTareaTitulo}
               onChange={e => setNuevaTareaTitulo(e.target.value)}
-              className="flex-1 px-5 py-3.5 rounded-xl border border-white/5 bg-[#101320] text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors text-sm shadow-inner"
+              className="flex-1 h-11 px-4 rounded-xl border border-white/5 bg-[#101320] text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors text-sm shadow-inner"
             />
             <button 
               type="submit" 
-              className="px-6 py-3.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-900/20 active:scale-95 shrink-0"
+              className="h-11 px-5 min-w-[96px] rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-900/20 active:scale-95 shrink-0"
             >
               <Plus className="w-4 h-4" />
               <span>Añadir</span>
@@ -334,7 +334,7 @@ export default function MiDiaClient({
           {/* Listado */}
           <div className="space-y-4">
             {currentItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 md:py-24 text-center bg-[#101320]/40 rounded-2xl border border-dashed border-white/5 text-slate-500 p-6 backdrop-blur-sm">
+              <div data-testid="card" className="flex flex-col items-center justify-center py-12 md:py-24 text-center bg-[#101320]/40 rounded-2xl border border-dashed border-white/5 text-slate-500 p-6 backdrop-blur-sm">
                 <CheckCircle className="w-10 h-10 md:w-14 md:h-14 text-slate-600/60 mb-3" />
                 <p className="text-sm md:text-base font-bold text-slate-300">No hay tareas planificadas aún</p>
                 <p className="text-xs text-slate-500 mt-2 max-w-[320px] leading-relaxed">
@@ -360,7 +360,7 @@ export default function MiDiaClient({
 
         {/* Columna de Sugerencias (Derecha) */}
         <div className="flex flex-col gap-6">
-          <div className="card p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
+          <div data-testid="card" className="card p-6" style={{ background: 'var(--bg-dark-card)', borderColor: 'var(--border)' }}>
             <div className="flex items-center justify-between mb-5 cursor-pointer select-none" onClick={() => setShowSuggestions(!showSuggestions)}>
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-400" />
@@ -386,8 +386,8 @@ export default function MiDiaClient({
                     placeholder="Filtrar backlog..."
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pr-4 py-2.5 rounded-xl border border-white/5 bg-slate-950/40 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-colors"
-                    style={{ paddingLeft: '38px' }}
+                    className="w-full h-11 pr-4 rounded-xl border border-white/5 bg-slate-950/40 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-colors"
+                    style={{ paddingLeft: '44px' }}
                   />
                 </div>
 

@@ -10,6 +10,7 @@ interface ItemModalProps {
   item?: Item
   proyectos: Proyecto[]
   onClose: () => void
+  onSaved?: (savedItem: Item) => void
   tipoDefault?: ItemTipo
 }
 
@@ -17,7 +18,7 @@ const TIPOS: ItemTipo[] = ['tarea', 'evento', 'idea', 'nota', 'recordatorio']
 const PRIORIDADES: ItemPrioridad[] = ['baja', 'media', 'alta', 'urgente']
 const ETIQUETAS_SUGERIDAS = ['trabajo', 'personal', 'salud', 'finanzas', 'aprendizaje', 'tecnología', 'urgente']
 
-export default function ItemModal({ item, proyectos, onClose, tipoDefault = 'tarea' }: ItemModalProps) {
+export default function ItemModal({ item, proyectos, onClose, onSaved, tipoDefault = 'tarea' }: ItemModalProps) {
   const [titulo, setTitulo]           = useState(item?.titulo ?? '')
   const [tipo, setTipo]               = useState<ItemTipo>(item?.tipo ?? tipoDefault)
   const [descripcion, setDescripcion] = useState(item?.descripcion ?? '')
@@ -64,11 +65,13 @@ export default function ItemModal({ item, proyectos, onClose, tipoDefault = 'tar
         etiquetas,
         estado:       (item?.estado ?? 'activo') as any,
       }
+      let savedItem: Item
       if (item) {
-        await actualizarItem(item.id, data)
+        savedItem = await actualizarItem(item.id, data)
       } else {
-        await crearItem(data)
+        savedItem = await crearItem(data)
       }
+      onSaved?.(savedItem)
       onClose()
     } finally {
       setGuardando(false)

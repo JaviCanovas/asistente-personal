@@ -152,7 +152,24 @@ export async function actualizarItem(id: string, data: Partial<Item>) {
   if (!isSupabaseConfigured()) return { ...ITEMS_DEMO[0], ...data }
   const supabase = await createClient()
 
-  // Recuperar el item antes de actualizar para comparar los cambios de fecha y el ID de Google
+  const hayCambioFecha = data.fecha_limite !== undefined || data.fecha_evento !== undefined || data.tipo !== undefined
+
+  // Solo si hay cambios de fecha o tipo necesitamos comprobar el estado previo para Google Calendar
+  if (!hayCambioFecha) {
+    const { data: item, error } = await supabase
+      .from('items')
+      .update(data)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    revalidatePath('/tareas')
+    revalidatePath('/hoy')
+    return item
+  }
+
+  // Si hay cambio de fecha, consultar el estado anterior
   const { data: itemAntes } = await supabase
     .from('items')
     .select('*')
@@ -210,53 +227,43 @@ export async function actualizarItem(id: string, data: Partial<Item>) {
 
   if (error) throw new Error(error.message)
 
-  // Sincronizar cambios en Google Calendar
+  // Sincronizar cambios en Google Calendar en segundo plano sin bloquear si falla
   if (itemAntes) {
-    const { crearEventoGoogle, actualizarEventoGoogle, eliminarEventoGoogle } = await import('@/lib/googleCalendar')
-    const tieneFechaAhora = item.fecha_evento || item.fecha_limite
-    const teniaFechaAntes = itemAntes.fecha_evento || itemAntes.fecha_limite
-    const googleEventId = itemAntes.google_event_id || item.google_event_id
+    try {
+      const { crearEventoGoogle, actualizarEventoGoogle, eliminarEventoGoogle } = await import('@/lib/googleCalendar')
+      const tieneFechaAhora = item.fecha_evento || item.fecha_limite
+      const teniaFechaAntes = itemAntes.fecha_evento || itemAntes.fecha_limite
+      const googleEventId = itemAntes.google_event_id || item.google_event_id
 
-    if (tieneFechaAhora) {
-      if (googleEventId) {
-        // Ya existía en Google, lo actualizamos
-        await actualizarEventoGoogle(item as Item, googleEventId)
-      } else {
-        // Se le asignó fecha ahora, lo creamos
-        const newGoogleEventId = await crearEventoGoogle(item as Item)
-        if (newGoogleEventId) {
-          const { error: updateError } = await supabase
-            .from('items')
-            .update({ google_event_id: newGoogleEventId })
-            .eq('id', item.id)
-          if (updateError) {
-            console.error('[actualizarItem] Error al guardar google_event_id:', updateError.message)
+      if (tieneFechaAhora) {
+        if (googleEventId) {
+          await actualizarEventoGoogle(item as Item, googleEventId)
+        } else {
+          const newGoogleEventId = await crearEventoGoogle(item as Item)
+          if (newGoogleEventId) {
+            await supabase
+              .from('items')
+              .update({ google_event_id: newGoogleEventId })
+              .eq('id', item.id)
+            item.google_event_id = newGoogleEventId
           }
-          item.google_event_id = newGoogleEventId
         }
+      } else if (teniaFechaAntes && googleEventId) {
+        await eliminarEventoGoogle(googleEventId)
+        await supabase
+          .from('items')
+          .update({ google_event_id: null })
+          .eq('id', item.id)
+        item.google_event_id = null
       }
-    } else if (teniaFechaAntes && googleEventId) {
-      // Tenía fecha pero se la quitaron, lo eliminamos de Google Calendar
-      await eliminarEventoGoogle(googleEventId)
-      const { error: updateError } = await supabase
-        .from('items')
-        .update({ google_event_id: null })
-        .eq('id', item.id)
-      if (updateError) {
-        console.error('[actualizarItem] Error al eliminar google_event_id:', updateError.message)
-      }
-      item.google_event_id = null
+    } catch (gErr) {
+      console.error('[actualizarItem] Error sincronizando con Google Calendar:', gErr)
     }
   }
 
-  revalidatePath('/inbox')
-  revalidatePath('/hoy')
   revalidatePath('/tareas')
-  revalidatePath('/ideas')
-  revalidatePath('/notas')
+  revalidatePath('/hoy')
   revalidatePath('/calendario')
-  revalidatePath('/proyectos')
-  revalidatePath('/revision-semanal')
   return item
 }
 
@@ -264,15 +271,15 @@ export async function archivarItem(id: string) {
   return actualizarItem(id, { estado: 'archivado' })
 }
 
-export async function marcarHecho(id: string) {
-  return actualizarItem(id, { estado: 'hecho' })
+export async function marcarHecho(id: string, hecho: boolean = true) {
+  return actualizarItem(id, { estado: hecho ? 'hecho' : 'activo' })
 }
 
 export async function eliminarItem(id: string) {
   if (!isSupabaseConfigured()) return
   const supabase = await createClient()
 
-  // Recuperar el item antes de eliminar para obtener el ID de Google Calendar
+  // Recuperar el item antes de eliminar para obtener el ID de Google Calendar si lo tuviera
   const { data: item } = await supabase
     .from('items')
     .select('google_event_id')
@@ -280,20 +287,19 @@ export async function eliminarItem(id: string) {
     .single()
 
   if (item?.google_event_id) {
-    const { eliminarEventoGoogle } = await import('@/lib/googleCalendar')
-    await eliminarEventoGoogle(item.google_event_id)
+    try {
+      const { eliminarEventoGoogle } = await import('@/lib/googleCalendar')
+      await eliminarEventoGoogle(item.google_event_id)
+    } catch (gErr) {
+      console.error('[eliminarItem] Error eliminando evento Google Calendar:', gErr)
+    }
   }
 
   const { error } = await supabase.from('items').delete().eq('id', id)
   if (error) throw new Error(error.message)
-  revalidatePath('/inbox')
-  revalidatePath('/hoy')
   revalidatePath('/tareas')
-  revalidatePath('/ideas')
-  revalidatePath('/notas')
-  revalidatePath('/calendario')
-  revalidatePath('/proyectos')
-  revalidatePath('/revision-semanal')
+  revalidatePath('/hoy')
+  revalidatePath('/inbox')
 }
 
 export async function procesarItemInbox(
