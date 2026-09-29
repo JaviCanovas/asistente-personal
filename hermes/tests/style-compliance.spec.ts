@@ -8,6 +8,7 @@ const ROUTES = [
   '/calendario',
   '/mi-dia',
   '/inbox',
+  '/horario',
 ];
 
 const VIEWPORTS = [
