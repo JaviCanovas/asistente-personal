@@ -143,8 +143,11 @@ export async function crearItem(data: {
     }
   }
 
+  revalidatePath('/')
   revalidatePath('/inbox')
+  revalidatePath('/tareas')
   revalidatePath('/hoy')
+  revalidatePath('/mi-dia')
   revalidatePath('/calendario')
   return item
 }
@@ -261,8 +264,11 @@ export async function actualizarItem(id: string, data: Partial<Item>) {
     }
   }
 
+  revalidatePath('/')
   revalidatePath('/tareas')
   revalidatePath('/hoy')
+  revalidatePath('/inbox')
+  revalidatePath('/mi-dia')
   revalidatePath('/calendario')
   return item
 }
@@ -297,9 +303,11 @@ export async function eliminarItem(id: string) {
 
   const { error } = await supabase.from('items').delete().eq('id', id)
   if (error) throw new Error(error.message)
+  revalidatePath('/')
   revalidatePath('/tareas')
   revalidatePath('/hoy')
   revalidatePath('/inbox')
+  revalidatePath('/mi-dia')
 }
 
 export async function procesarItemInbox(
@@ -385,6 +393,7 @@ export async function agregarAMiDia(id: string, fecha: string) {
 
   if (error) throw new Error(error.message)
 
+  revalidatePath('/')
   revalidatePath('/inbox')
   revalidatePath('/hoy')
   revalidatePath('/tareas')
@@ -415,6 +424,7 @@ export async function quitarDeMiDia(id: string) {
 
   if (error) throw new Error(error.message)
 
+  revalidatePath('/')
   revalidatePath('/inbox')
   revalidatePath('/hoy')
   revalidatePath('/tareas')

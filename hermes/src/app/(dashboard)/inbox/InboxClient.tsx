@@ -37,30 +37,67 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
     textareaRef.current?.focus()
   }, [])
 
-  // Las sugerencias vienen ya calculadas desde el servidor (sin chrono-node en el bundle del cliente)
-  const itemsConSugerencias: ItemConSugerencia[] = itemsIniciales.map((item, i) => ({
-    item,
-    sugerencia: sugerencias[i] ?? { tipo: 'tarea', prioridad: 'media', etiquetas: [], confianza: 0.3, razon: '' }
-  }))
+  // Estado local para actualizaciones optimistas instantáneas (0 ms de espera visual)
+  const [itemsConSugerencias, setItemsConSugerencias] = useState<ItemConSugerencia[]>(() =>
+    itemsIniciales.map((item, i) => ({
+      item,
+      sugerencia: sugerencias[i] ?? { tipo: 'tarea', prioridad: 'media', etiquetas: [], confianza: 0.3, razon: '' }
+    }))
+  )
+
+  useEffect(() => {
+    setItemsConSugerencias(
+      itemsIniciales.map((item, i) => ({
+        item,
+        sugerencia: sugerencias[i] ?? { tipo: 'tarea', prioridad: 'media', etiquetas: [], confianza: 0.3, razon: '' }
+      }))
+    )
+  }, [itemsIniciales, sugerencias])
 
   async function handleCapturar() {
     if (!texto.trim() || enviando) return
     const textoAEnviar = texto.trim()
     setTexto('') // Feedback instantáneo en la UI
     setEnviando(true)
+
+    const tempId = 'temp-' + Date.now()
+    const tempItem: Item = {
+      id: tempId,
+      titulo: textoAEnviar,
+      tipo: 'tarea',
+      estado: 'sin_procesar',
+      prioridad: 'media',
+      etiquetas: [],
+      origen: 'web',
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    const tempSugerencia: ClasificacionSugerida = {
+      tipo: 'tarea',
+      prioridad: 'media',
+      etiquetas: [],
+      confianza: 0.5,
+      razon: 'Nueva captura'
+    }
+    setItemsConSugerencias(curr => [{ item: tempItem, sugerencia: tempSugerencia }, ...curr])
+
     try {
       await crearItem({ titulo: textoAEnviar, estado: 'sin_procesar' })
       textareaRef.current?.focus()
     } catch (e) {
       console.error(e)
+      setItemsConSugerencias(curr => curr.filter(x => x.item.id !== tempId))
       setTexto(textoAEnviar) // Revertir si hay error
     } finally {
       setEnviando(false)
     }
   }
 
-  // Aceptar la sugerencia automática directamente (¡Sin abrir modales!)
+  // Aceptar la sugerencia automática directamente (¡Sin abrir modales y con feedback de 0 ms!)
   async function handleAceptarSugerencia(item: Item, sugerencia: ClasificacionSugerida) {
+    const prev = itemsConSugerencias
+    setItemsConSugerencias(curr => curr.filter(x => x.item.id !== item.id))
     setProcesandoId(item.id)
     try {
       // Intentar mapear el nombre del proyecto sugerido al ID real
@@ -77,6 +114,7 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
       })
     } catch (e) {
       console.error(e)
+      setItemsConSugerencias(prev)
     } finally {
       setProcesandoId(null)
     }
@@ -95,22 +133,26 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
     setAplicandoFecha(sugerencia.fecha_limite?.split('T')[0] ?? '')
   }
 
-  // Guardar personalización manual
+  // Guardar personalización manual con eliminación optimista
   async function handleGuardarPersonalizacion() {
     if (!itemAEditar) return
-    setProcesandoId(itemAEditar.id)
+    const idAEditar = itemAEditar.id
+    const prev = itemsConSugerencias
+    setItemsConSugerencias(curr => curr.filter(x => x.item.id !== idAEditar))
+    setItemAEditar(null)
+    setSugerenciaAEditar(null)
+    setProcesandoId(idAEditar)
     try {
-      await procesarItemInbox(itemAEditar.id, {
+      await procesarItemInbox(idAEditar, {
         tipo: aplicandoTipo,
         prioridad: aplicandoPrioridad,
         proyecto_id: aplicandoProyecto || undefined,
         fecha_limite: aplicandoFecha || undefined,
         etiquetas: sugerenciaAEditar?.etiquetas ?? [],
       })
-      setItemAEditar(null)
-      setSugerenciaAEditar(null)
     } catch (e) {
       console.error(e)
+      setItemsConSugerencias(prev)
     } finally {
       setProcesandoId(null)
     }
@@ -133,7 +175,7 @@ export default function InboxClient({ items: itemsIniciales, proyectos, sugerenc
           </div>
         </div>
         <span className="badge font-semibold px-3 py-1 text-xs self-start sm:self-auto" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
-          {itemsIniciales.length} sin procesar
+          {itemsConSugerencias.length} sin procesar
         </span>
       </div>
 

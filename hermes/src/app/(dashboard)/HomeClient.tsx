@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   Play, ArrowRight, Dumbbell, CheckCircle2, Circle, Calendar,
@@ -8,6 +8,8 @@ import {
 } from 'lucide-react'
 import type { ItemPriorizado, PlantillaGym, RutinaGym, Item } from '@/lib/types'
 import { marcarHecho, crearItem } from '@/lib/actions/items'
+import { getHomeData } from '@/lib/actions/home'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useToast } from '@/components/ui/Toast'
 
 interface HomeClientProps {
@@ -30,9 +32,34 @@ export default function HomeClient({
   rutinas,
 }: HomeClientProps) {
   const { showToast } = useToast()
-  const [itemsHoy, setItemsHoy] = useState<ItemPriorizado[]>(priorizados)
+  const queryClient = useQueryClient()
+
+  // Consulta persistida en IndexedDB: pinta de inmediato lo último conocido y refresca en segundo plano
+  const { data: homeData, isFetching } = useQuery({
+    queryKey: ['home-data'],
+    queryFn: () => getHomeData(),
+    initialData: {
+      priorizados,
+      plantillas,
+      rutinas,
+    },
+    staleTime: 60 * 1000,
+  })
+
+  const priorizadosActuales = homeData?.priorizados ?? priorizados
+  const plantillasActuales = homeData?.plantillas ?? plantillas
+  const rutinasActuales = homeData?.rutinas ?? rutinas
+
+  const [itemsHoy, setItemsHoy] = useState<ItemPriorizado[]>(priorizadosActuales)
   const [quickInput, setQuickInput] = useState('')
   const [isCreatingQuick, setIsCreatingQuick] = useState(false)
+
+  // Sincronizar items locales cuando React Query finaliza la revalidación en background
+  useEffect(() => {
+    if (homeData?.priorizados) {
+      setItemsHoy(homeData.priorizados)
+    }
+  }, [homeData?.priorizados])
 
   const hoy = new Date()
   const hora = hoy.getHours()
@@ -60,6 +87,13 @@ export default function HomeClient({
     if (!itemTarget) return
 
     setItemsHoy(prev => prev.filter(i => i.item.id !== itemId))
+    queryClient.setQueryData(['home-data'], (old: any) => {
+      if (!old) return old
+      return {
+        ...old,
+        priorizados: old.priorizados?.filter((p: ItemPriorizado) => p.item.id !== itemId) ?? []
+      }
+    })
 
     showToast({
       message: `Completada: "${itemTarget.item.titulo}"`,
@@ -149,22 +183,22 @@ export default function HomeClient({
 
   // Cálculo de rutina GYM recomendada
   let plantillaRecomendada: PlantillaGym | undefined
-  if (plantillas && plantillas.length > 0) {
-    const ultimaPlantilla = getUltimaPlantillaRealizada(rutinas, plantillas)
+  if (plantillasActuales && plantillasActuales.length > 0) {
+    const ultimaPlantilla = getUltimaPlantillaRealizada(rutinasActuales, plantillasActuales)
     if (ultimaPlantilla) {
-      const indexUltima = plantillas.findIndex(p => p.id === ultimaPlantilla.id)
-      const indexSiguiente = (indexUltima + 1) % plantillas.length
-      plantillaRecomendada = plantillas[indexSiguiente]
+      const indexUltima = plantillasActuales.findIndex(p => p.id === ultimaPlantilla.id)
+      const indexSiguiente = (indexUltima + 1) % plantillasActuales.length
+      plantillaRecomendada = plantillasActuales[indexSiguiente]
     } else {
       const diaSemana = hoy.getDay()
       if (diaSemana === 0 || diaSemana === 1) {
-        plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 1') || p.orden === 1) || plantillas[0]
+        plantillaRecomendada = plantillasActuales.find(p => p.nombre_dia.includes('DÍA 1') || p.orden === 1) || plantillasActuales[0]
       } else if (diaSemana === 2 || diaSemana === 3) {
-        plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 2') || p.orden === 2) || plantillas[1] || plantillas[0]
+        plantillaRecomendada = plantillasActuales.find(p => p.nombre_dia.includes('DÍA 2') || p.orden === 2) || plantillasActuales[1] || plantillasActuales[0]
       } else if (diaSemana === 4) {
-        plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 3') || p.orden === 3) || plantillas[2] || plantillas[0]
+        plantillaRecomendada = plantillasActuales.find(p => p.nombre_dia.includes('DÍA 3') || p.orden === 3) || plantillasActuales[2] || plantillasActuales[0]
       } else {
-        plantillaRecomendada = plantillas.find(p => p.nombre_dia.includes('DÍA 4') || p.orden === 4) || plantillas[3] || plantillas[0]
+        plantillaRecomendada = plantillasActuales.find(p => p.nombre_dia.includes('DÍA 4') || p.orden === 4) || plantillasActuales[3] || plantillasActuales[0]
       }
     }
   }
@@ -179,6 +213,12 @@ export default function HomeClient({
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               Día productivo
             </span>
+            {isFetching && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-violet-500/15 text-violet-300 border border-violet-500/25 transition-all">
+                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-ping" />
+                Actualizando
+              </span>
+            )}
             <span className="text-xs text-neutral-500">·</span>
             <span className="text-xs text-neutral-400 font-medium">{fechaCapitalizada}</span>
           </div>

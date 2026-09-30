@@ -19,6 +19,7 @@ import {
   Lightbulb,
   Clock,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { checkGoogleConnection } from '@/lib/actions/health'
 
 interface NavItem {
@@ -49,11 +50,14 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname()
-  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null)
 
-  useEffect(() => {
-    checkGoogleConnection().then(setGoogleConnected).catch(() => setGoogleConnected(false))
-  }, [])
+  // Comprobación cacheada para evitar llamadas innecesarias al servidor en cada navegación
+  const { data: isConnected } = useQuery({
+    queryKey: ['google-connected'],
+    queryFn: () => checkGoogleConnection(),
+    staleTime: 5 * 60 * 1000,
+  })
+  const googleConnected = isConnected ?? null
 
   return (
     <>
@@ -226,6 +230,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
                 <li key={href}>
                   <Link
                     href={href}
+                    prefetch={true}
                     onClick={onClose}
                     className={`nav-link-item ${isActive ? 'nav-link-active' : ''}`}
                     style={isActive ? {

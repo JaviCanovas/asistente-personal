@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 import { Home, Sun, CheckSquare, Dumbbell, Menu } from 'lucide-react'
 
 interface MobileBottomNavProps {
@@ -10,6 +11,7 @@ interface MobileBottomNavProps {
 
 export default function MobileBottomNav({ onOpenMenu }: MobileBottomNavProps) {
   const pathname = usePathname()
+  const router = useRouter()
 
   const NAV_BUTTONS = [
     { href: '/', label: 'Inicio', icon: Home, color: '#a78bfa' },
@@ -17,6 +19,23 @@ export default function MobileBottomNav({ onOpenMenu }: MobileBottomNavProps) {
     { href: '/tareas', label: 'Tareas', icon: CheckSquare, color: '#8b5cf6' },
     { href: '/gym', label: 'Gym', icon: Dumbbell, color: '#10b981' },
   ]
+
+  // Prefetching inteligente en momentos de inactividad para las rutas principales
+  useEffect(() => {
+    const prefetchRoutes = () => {
+      ['/tareas', '/gym', '/mi-dia'].forEach((route) => {
+        router.prefetch(route)
+      })
+    }
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const handle = (window as any).requestIdleCallback(prefetchRoutes, { timeout: 2000 })
+      return () => (window as any).cancelIdleCallback(handle)
+    } else {
+      const timer = setTimeout(prefetchRoutes, 1200)
+      return () => clearTimeout(timer)
+    }
+  }, [router])
 
   return (
     <nav
@@ -38,6 +57,9 @@ export default function MobileBottomNav({ onOpenMenu }: MobileBottomNavProps) {
             <Link
               key={href}
               href={href}
+              prefetch={true}
+              onTouchStart={() => router.prefetch(href)}
+              onMouseEnter={() => router.prefetch(href)}
               className="flex flex-col items-center justify-center py-1 select-none transition-transform active:scale-90"
             >
               <div

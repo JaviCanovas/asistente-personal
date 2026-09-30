@@ -11,6 +11,30 @@ const nextConfig: NextConfig = {
       'googleapis': { browser: './src/lib/stubs/googleapis-stub.ts' },
     },
   },
+
+  // Optimización de importaciones pesadas (árbol de iconos y fechas)
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'date-fns'],
+  },
+
+  // Cabeceras específicas para el service worker
+  async headers() {
+    return [
+      {
+        source: '/sw.js',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate',
+          },
+          {
+            key: 'Service-Worker-Allowed',
+            value: '/',
+          },
+        ],
+      },
+    ]
+  },
 }
 
 export default nextConfig

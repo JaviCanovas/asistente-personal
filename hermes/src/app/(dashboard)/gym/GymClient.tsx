@@ -19,6 +19,7 @@ import {
   type EjercicioSesionInput,
   type SerieInput
 } from '@/lib/actions/health'
+import { enqueueOfflineAction, syncOfflineQueue } from '@/lib/offlineQueue'
 import { useToast } from '@/components/ui/Toast'
 
 const GymProgressionChart = dynamic(() => import('./GymProgressionChart'), {
@@ -134,6 +135,28 @@ export default function GymClient({
       }
     }
   }, [sesionActiva])
+
+  // Sincronización automática de entrenamientos guardados offline al recuperar cobertura
+  useEffect(() => {
+    const handleSync = () => {
+      syncOfflineQueue({
+        onSyncWorkout: async (payload) => {
+          const res = await guardarSesionEstructurada(payload)
+          return res.ok
+        },
+        onSuccessToast: (msg) => {
+          showToast({ message: msg, type: 'success' })
+        },
+      })
+    }
+
+    if (typeof window !== 'undefined' && navigator.onLine) {
+      handleSync()
+    }
+
+    window.addEventListener('online', handleSync)
+    return () => window.removeEventListener('online', handleSync)
+  }, [showToast])
 
   // Timer de descanso
   useEffect(() => {
@@ -376,30 +399,47 @@ export default function GymClient({
     if (!sesionActiva) return
     setGuardando(true)
 
-    try {
-      const duracionSegundos = Math.round((Date.now() - sesionActiva.iniciadoAt) / 1000)
-      
-      const payloadEjercicios: EjercicioSesionInput[] = sesionActiva.ejercicios.map(ej => ({
-        nombre: ej.nombre,
-        completado: ej.completado,
-        descanso: ej.descanso,
-        notasGuia: ej.notasGuia,
-        series: ej.series.map(s => ({
-          numero_serie: s.numero_serie,
-          peso_kg: s.peso_kg,
-          repeticiones: s.repeticiones,
-          rir: s.rir,
-          completada: s.completada
-        }))
+    const duracionSegundos = Math.round((Date.now() - sesionActiva.iniciadoAt) / 1000)
+    
+    const payloadEjercicios: EjercicioSesionInput[] = sesionActiva.ejercicios.map(ej => ({
+      nombre: ej.nombre,
+      completado: ej.completado,
+      descanso: ej.descanso,
+      notasGuia: ej.notasGuia,
+      series: ej.series.map(s => ({
+        numero_serie: s.numero_serie,
+        peso_kg: s.peso_kg,
+        repeticiones: s.repeticiones,
+        rir: s.rir,
+        completada: s.completada
       }))
+    }))
 
-      const res = await guardarSesionEstructurada({
-        fecha: sesionActiva.fecha,
-        plantillaId: sesionActiva.plantillaId,
-        nombreDia: sesionActiva.nombreDia,
-        duracionSegundos,
-        ejercicios: payloadEjercicios
-      })
+    const sessionPayload = {
+      fecha: sesionActiva.fecha,
+      plantillaId: sesionActiva.plantillaId,
+      nombreDia: sesionActiva.nombreDia,
+      duracionSegundos,
+      ejercicios: payloadEjercicios
+    }
+
+    try {
+      // Si el móvil está sin cobertura (sótano del gym), encolar en local inmediatamente
+      if (typeof window !== 'undefined' && !navigator.onLine) {
+        enqueueOfflineAction('guardar_entrenamiento', sessionPayload)
+        localStorage.removeItem(STORAGE_KEY)
+        setSesionActiva(null)
+        setTimerRest(null)
+        showToast({
+          message: 'Sin cobertura en el gym: Guardado en tu móvil. Se sincronizará automáticamente al volver Internet.',
+          type: 'info',
+          duration: 7000
+        })
+        setTabActiva('historial')
+        return
+      }
+
+      const res = await guardarSesionEstructurada(sessionPayload)
 
       if (res.ok) {
         localStorage.removeItem(STORAGE_KEY)
@@ -415,8 +455,23 @@ export default function GymClient({
         showToast({ message: res.mensaje || 'Error al guardar el entrenamiento', type: 'error' })
       }
     } catch (err: any) {
-      console.error('Error finalizando entrenamiento:', err)
-      showToast({ message: `Error: ${err.message || 'Error desconocido'}`, type: 'error' })
+      console.warn('Fallo de red al guardar entrenamiento, encolando localmente:', err)
+      enqueueOfflineAction('guardar_entrenamiento', {
+        fecha: sesionActiva.fecha,
+        plantillaId: sesionActiva.plantillaId,
+        nombreDia: sesionActiva.nombreDia,
+        duracionSegundos: Math.round((Date.now() - sesionActiva.iniciadoAt) / 1000),
+        ejercicios: payloadEjercicios
+      })
+      localStorage.removeItem(STORAGE_KEY)
+      setSesionActiva(null)
+      setTimerRest(null)
+      showToast({
+        message: 'Guardado localmente sin conexión. Se sincronizará en cuanto haya cobertura.',
+        type: 'info',
+        duration: 7000
+      })
+      setTabActiva('historial')
     } finally {
       setGuardando(false)
     }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FolderOpen, Plus, X, Loader2 } from 'lucide-react'
 import type { Item, Proyecto } from '@/lib/types'
 import { COLORES_PROYECTO } from '@/lib/utils'
@@ -13,6 +13,7 @@ interface ProyectosClientProps {
 }
 
 export default function ProyectosClient({ proyectos, todosLosItems }: ProyectosClientProps) {
+  const [listaProyectos, setListaProyectos] = useState<Proyecto[]>(proyectos)
   const [proyectoActivo, setProyectoActivo] = useState<Proyecto | null>(null)
   const [modalCrear, setModalCrear] = useState(false)
   const [nombreNuevo, setNombreNuevo] = useState('')
@@ -20,20 +21,44 @@ export default function ProyectosClient({ proyectos, todosLosItems }: ProyectosC
   const [colorNuevo, setColorNuevo] = useState(COLORES_PROYECTO[0])
   const [guardando, setGuardando] = useState(false)
 
+  // Sincronizar si cambian los props
+  useEffect(() => {
+    setListaProyectos(proyectos)
+  }, [proyectos])
+
   const itemsDelProyecto = proyectoActivo
     ? todosLosItems.filter(i => i.proyecto_id === proyectoActivo.id && i.estado !== 'archivado')
     : []
 
   async function handleCrear() {
     if (!nombreNuevo.trim()) return
-    setGuardando(true)
+    const nombre = nombreNuevo.trim()
+    const desc = descripcionNueva.trim() || undefined
+    const color = colorNuevo
+    const tempId = 'temp-' + Date.now()
+    const tempProyecto: Proyecto = {
+      id: tempId,
+      nombre,
+      descripcion: desc,
+      color,
+      estado: 'activo',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    setListaProyectos(prev => [...prev, tempProyecto])
+    setModalCrear(false)
+    setNombreNuevo('')
+    setDescripcionNueva('')
+
     try {
-      await crearProyecto({ nombre: nombreNuevo.trim(), descripcion: descripcionNueva.trim() || undefined, color: colorNuevo })
-      setModalCrear(false)
-      setNombreNuevo('')
-      setDescripcionNueva('')
-    } finally {
-      setGuardando(false)
+      const creado = await crearProyecto({ nombre, descripcion: desc, color })
+      if (creado?.id) {
+        setListaProyectos(prev => prev.map(p => p.id === tempId ? (creado as Proyecto) : p))
+      }
+    } catch (e) {
+      console.error(e)
+      setListaProyectos(prev => prev.filter(p => p.id !== tempId))
     }
   }
 
@@ -52,7 +77,7 @@ export default function ProyectosClient({ proyectos, todosLosItems }: ProyectosC
       <div className="flex flex-col md:flex-row gap-6">
         {/* Lista de proyectos */}
         <div className="w-full md:w-56 shrink-0 flex md:flex-col gap-2 overflow-x-auto pb-3 md:pb-0 scrollbar-none">
-          {proyectos.map(p => {
+          {listaProyectos.map(p => {
             const count = todosLosItems.filter(i => i.proyecto_id === p.id && i.estado === 'activo').length
             return (
               <div
@@ -74,7 +99,7 @@ export default function ProyectosClient({ proyectos, todosLosItems }: ProyectosC
               </div>
             )
           })}
-          {proyectos.length === 0 && (
+          {listaProyectos.length === 0 && (
             <p className="text-sm px-2" style={{ color: 'var(--text-muted)' }}>Sin proyectos</p>
           )}
         </div>

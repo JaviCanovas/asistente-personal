@@ -135,6 +135,7 @@ export async function crearEventoGoogle(item: Item): Promise<string | null> {
       calendarId: 'primary',
       requestBody: eventData,
     })
+    invalidarCacheGoogle()
     console.log('[crearEventoGoogle] Evento creado:', response.data.id)
     return response.data.id || null
   } catch (err: any) {
@@ -158,6 +159,7 @@ export async function actualizarEventoGoogle(item: Item, eventId: string): Promi
       eventId: eventId,
       requestBody: eventData,
     })
+    invalidarCacheGoogle()
     console.log('[actualizarEventoGoogle] Evento actualizado:', eventId)
     return true
   } catch (err: any) {
@@ -177,6 +179,7 @@ export async function eliminarEventoGoogle(eventId: string): Promise<boolean> {
       calendarId: 'primary',
       eventId: eventId,
     })
+    invalidarCacheGoogle()
     console.log('[eliminarEventoGoogle] Evento eliminado:', eventId)
     return true
   } catch (err: any) {
@@ -185,8 +188,25 @@ export async function eliminarEventoGoogle(eventId: string): Promise<boolean> {
   }
 }
 
-// 4. Obtener todos los eventos de Google Calendar
-export async function obtenerEventosGoogle(): Promise<Item[]> {
+// Cache en memoria para evitar saturar la API de Google en cada petición SSR
+const googleEventsCache = new Map<string, { events: Item[]; expiresAt: number }>()
+const CACHE_TTL_MS = 3 * 60 * 1000 // 3 minutos
+
+export function invalidarCacheGoogle() {
+  googleEventsCache.clear()
+}
+
+// 4. Obtener eventos de Google Calendar (con soporte de rango y caché)
+export async function obtenerEventosGoogle(options?: { timeMin?: string; timeMax?: string }): Promise<Item[]> {
+  const timeMin = options?.timeMin || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const timeMax = options?.timeMax || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+  const cacheKey = `${timeMin}_${timeMax}`
+
+  const cached = googleEventsCache.get(cacheKey)
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.events
+  }
+
   const auth = await getAuthenticatedAuthClient()
   if (!auth) {
     console.log('[obtenerEventosGoogle] Google is not connected or auth client is not available.')
@@ -195,9 +215,6 @@ export async function obtenerEventosGoogle(): Promise<Item[]> {
 
   try {
     const calendar = google.calendar({ version: 'v3', auth })
-    // Recuperar eventos desde 30 días en el pasado hasta 365 días en el futuro
-    const timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-    const timeMax = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
 
     const response = await calendar.events.list({
       calendarId: 'primary',
@@ -209,7 +226,7 @@ export async function obtenerEventosGoogle(): Promise<Item[]> {
 
     const googleEvents = response.data.items || []
 
-    return googleEvents.map(event => {
+    const items: Item[] = googleEvents.map(event => {
       const fechaInicioStr = event.start?.dateTime || event.start?.date || ''
       const fechaFinStr = event.end?.dateTime || event.end?.date || ''
 
@@ -247,10 +264,26 @@ export async function obtenerEventosGoogle(): Promise<Item[]> {
         updated_at: event.updated || new Date().toISOString(),
       } as Item
     })
+
+    // Guardar en caché con TTL de 3 minutos
+    googleEventsCache.set(cacheKey, {
+      events: items,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    })
+
+    return items
   } catch (err: any) {
     console.error('[obtenerEventosGoogle] Error fetching events:', err.message)
     return []
   }
+}
+
+// 4.b Obtener únicamente los eventos de Google Calendar para HOY (optimizado para Home)
+export async function obtenerEventosGoogleHoy(): Promise<Item[]> {
+  const now = new Date()
+  const timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString()
+  const timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).toISOString()
+  return obtenerEventosGoogle({ timeMin, timeMax })
 }
 
 // 5. Sincronizar todos los items pendientes

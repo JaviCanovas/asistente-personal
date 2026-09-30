@@ -1,16 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useDeferredValue } from 'react'
 import {
   CheckSquare, Plus, Search, Star, Calendar, CheckCircle2,
   Clock, AlertTriangle, ChevronRight, Sun, BookOpen,
   MoreVertical, Edit3, ChevronDown, ListFilter, FolderPlus, Layers
 } from 'lucide-react'
 import type { Item, Proyecto, ItemPrioridad } from '@/lib/types'
+import dynamic from 'next/dynamic'
 import ItemCard from '@/components/items/ItemCard'
-import TaskDetailDrawer from './TaskDetailDrawer'
-import NewListModal from './NewListModal'
 import TaskDatePicker from '@/components/ui/TaskDatePicker'
+
+const TaskDetailDrawer = dynamic(() => import('./TaskDetailDrawer'), { ssr: false })
+const NewListModal = dynamic(() => import('./NewListModal'), { ssr: false })
 import { parseNaturalDate } from './todoUtils'
 import { crearItem } from '@/lib/actions/items'
 import { crearProyecto } from '@/lib/actions/proyectos'
@@ -54,6 +56,7 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
   // Selección activa: puede ser una smart list ('mi-dia' | 'importantes' | ...) o el ID de un proyecto/asignatura
   const [seleccionId, setSeleccionId] = useState<string>('todas')
   const [busqueda, setBusqueda] = useState('')
+  const deferredBusqueda = useDeferredValue(busqueda)
 
   // Control de Modales y Drawer
   const [isListModalOpen, setIsListModalOpen] = useState(false)
@@ -230,7 +233,7 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
 
   // Filtrado de tareas
   const tareasDeLaVista = items.filter(t => {
-    if (busqueda && !t.titulo.toLowerCase().includes(busqueda.toLowerCase())) {
+    if (deferredBusqueda && !t.titulo.toLowerCase().includes(deferredBusqueda.toLowerCase())) {
       return false
     }
 
