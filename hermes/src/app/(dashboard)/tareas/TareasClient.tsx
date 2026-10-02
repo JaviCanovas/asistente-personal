@@ -61,6 +61,7 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
   // Control de Modales y Drawer
   const [isListModalOpen, setIsListModalOpen] = useState(false)
   const [proyectoEditar, setProyectoEditar] = useState<Proyecto | null>(null)
+  const [parentIdParaModal, setParentIdParaModal] = useState<string | null>(null)
   const [tareaSeleccionada, setTareaSeleccionada] = useState<Item | null>(null)
   const [mostrarCompletadas, setMostrarCompletadas] = useState(false)
   const [mostrarMenuMovil, setMostrarMenuMovil] = useState(false)
@@ -119,6 +120,9 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
   const handleListaCreada = (nuevoProyecto: Proyecto) => {
     setProyectos(prev => [...prev, nuevoProyecto])
     setSeleccionId(nuevoProyecto.id)
+    if (nuevoProyecto.parent_id) {
+      setExpandedLists(prev => new Set(prev).add(nuevoProyecto.parent_id!))
+    }
     setMostrarMenuMovil(false)
   }
 
@@ -367,32 +371,39 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
               </span>
             )}
 
-            {/* Botón "+ Sublista" en hover */}
+            {/* Botón "+ Sublista" visible en móvil/touch y hover en desktop */}
             {level < 2 && (
               <button
                 type="button"
                 onClick={e => {
                   e.stopPropagation()
-                  setInlineSublistParentId(inlineSublistParentId === p.id ? null : p.id)
-                  setInlineSublistName('')
-                  setExpandedLists(prev => new Set(prev).add(p.id))
+                  if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                    setProyectoEditar(null)
+                    setParentIdParaModal(p.id)
+                    setIsListModalOpen(true)
+                  } else {
+                    setInlineSublistParentId(inlineSublistParentId === p.id ? null : p.id)
+                    setInlineSublistName('')
+                    setExpandedLists(prev => new Set(prev).add(p.id))
+                  }
                 }}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:text-purple-300 rounded-lg hover:bg-white/10 transition-all cursor-pointer"
+                className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 p-1.5 hover:text-purple-300 rounded-lg hover:bg-white/10 transition-all cursor-pointer"
                 title="Añadir sublista"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
             )}
 
-            {/* Botón editar lista */}
+            {/* Botón editar lista visible en móvil/touch y hover en desktop */}
             <button
               type="button"
               onClick={e => {
                 e.stopPropagation()
                 setProyectoEditar(p)
+                setParentIdParaModal(null)
                 setIsListModalOpen(true)
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:text-white rounded-lg hover:bg-white/10 transition-all cursor-pointer"
+              className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 p-1.5 hover:text-white rounded-lg hover:bg-white/10 transition-all cursor-pointer"
               title="Configurar lista"
             >
               <MoreVertical className="w-3.5 h-3.5" />
@@ -447,21 +458,39 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
         <button
           type="button"
           onClick={() => setMostrarMenuMovil(!mostrarMenuMovil)}
-          className="flex items-center gap-2.5 text-sm font-bold text-neutral-100"
+          className="flex items-center gap-2.5 text-sm font-bold text-neutral-100 truncate mr-2"
         >
-          <ListFilter className="w-4 h-4 text-purple-400" />
-          <span>{proyectoActivo ? proyectoActivo.nombre : smartActiva?.label || 'Mis Tareas'}</span>
-          <ChevronDown className={`w-4 h-4 text-neutral-400 transition-transform ${mostrarMenuMovil ? 'rotate-180' : ''}`} />
+          <ListFilter className="w-4 h-4 text-purple-400 shrink-0" />
+          <span className="truncate">{proyectoActivo ? proyectoActivo.nombre : smartActiva?.label || 'Mis Tareas'}</span>
+          <ChevronDown className={`w-4 h-4 text-neutral-400 shrink-0 transition-transform ${mostrarMenuMovil ? 'rotate-180' : ''}`} />
         </button>
 
-        <button
-          type="button"
-          onClick={() => { setProyectoEditar(null); setIsListModalOpen(true); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 text-xs font-semibold hover:bg-purple-600/30 transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Nueva lista</span>
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {proyectoActivo && (
+            <button
+              type="button"
+              onClick={() => {
+                setProyectoEditar(null)
+                setParentIdParaModal(proyectoActivo.id)
+                setIsListModalOpen(true)
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 text-xs font-semibold hover:bg-purple-600/30 transition-colors"
+              title={`Crear sublista en ${proyectoActivo.nombre}`}
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Sublista</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => { setProyectoEditar(null); setParentIdParaModal(null); setIsListModalOpen(true); }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-neutral-800 text-neutral-200 border border-white/10 text-xs font-semibold hover:bg-neutral-700 transition-colors"
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+            <span>Lista</span>
+          </button>
+        </div>
       </div>
 
       {/* Grid de 2 Columnas estilo Microsoft To Do */}
@@ -621,13 +650,13 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
                       <button
                         type="button"
                         onClick={() => {
-                          setInlineSublistParentId(proyectoActivo.id)
-                          setInlineSublistName('')
-                          setExpandedLists(prev => new Set(prev).add(proyectoActivo.id))
+                          setProyectoEditar(null)
+                          setParentIdParaModal(proyectoActivo.id)
+                          setIsListModalOpen(true)
                         }}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors cursor-pointer border border-purple-500/25"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-purple-300 hover:text-white bg-purple-500/15 hover:bg-purple-500/25 transition-all cursor-pointer border border-purple-500/30 shadow-xs"
                       >
-                        <Plus className="w-3 h-3" />
+                        <Plus className="w-3 h-3 stroke-[2.5]" />
                         <span>Sublista</span>
                       </button>
 
@@ -672,6 +701,70 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
               />
             </div>
           </div>
+
+          {/* Sublistas chips / tabs de navegación rápida si el proyecto o su padre tiene sublistas */}
+          {proyectoActivo && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 mb-4 scrollbar-none">
+              <button
+                type="button"
+                onClick={() => setSeleccionId(proyectoActivo.parent_id || proyectoActivo.id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer border ${
+                  seleccionId === (proyectoActivo.parent_id || proyectoActivo.id)
+                    ? 'bg-purple-600/25 text-purple-200 border-purple-500/40 shadow-xs'
+                    : 'bg-neutral-900/80 text-neutral-400 border-white/5 hover:text-neutral-200 hover:bg-neutral-800'
+                }`}
+              >
+                {proyectoActivo.parent_id
+                  ? `Ver ${proyectos.find(p => p.id === proyectoActivo.parent_id)?.nombre || 'principal'}`
+                  : `Todo ${proyectoActivo.nombre} (${getProjectPendingCount(proyectoActivo.id)})`}
+              </button>
+
+              {/* Sublistas directas del proyecto activo o de su padre */}
+              {proyectos
+                .filter(p => p.parent_id === (proyectoActivo.parent_id || proyectoActivo.id))
+                .map(sub => {
+                  const isSubSelected = seleccionId === sub.id
+                  const subCount = getProjectPendingCount(sub.id)
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => setSeleccionId(sub.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs whitespace-nowrap transition-all cursor-pointer border ${
+                        isSubSelected
+                          ? 'bg-neutral-800 text-white border-white/20 shadow-xs font-semibold'
+                          : 'bg-neutral-900/80 text-neutral-400 border-white/5 hover:text-neutral-200 hover:bg-neutral-800 font-medium'
+                      }`}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: sub.color || '#8b5cf6' }}
+                      />
+                      <span>{sub.nombre}</span>
+                      {subCount > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/10 text-neutral-300 font-semibold">
+                          {subCount}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setProyectoEditar(null)
+                  setParentIdParaModal(proyectoActivo.parent_id || proyectoActivo.id)
+                  setIsListModalOpen(true)
+                }}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 whitespace-nowrap cursor-pointer transition-colors"
+                title="Añadir nueva sublista"
+              >
+                <Plus className="w-3 h-3 stroke-[2.5]" />
+                <span>+ Sublista</span>
+              </button>
+            </div>
+          )}
 
           {/* Barra de añadir: Una sola tarjeta con padding 12px 16px:
               - Arriba el input de 44px
@@ -967,11 +1060,17 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
       {/* Modal para Crear / Editar Lista o Asignatura */}
       <NewListModal
         isOpen={isListModalOpen}
-        onClose={() => setIsListModalOpen(false)}
+        onClose={() => {
+          setIsListModalOpen(false)
+          setProyectoEditar(null)
+          setParentIdParaModal(null)
+        }}
         onCreated={handleListaCreada}
         onUpdated={handleListaActualizada}
         onDeleted={handleListaEliminada}
         proyectoEditar={proyectoEditar}
+        parentIdInicial={parentIdParaModal}
+        proyectosDisponibles={proyectos}
       />
 
       {/* Panel Lateral Deslizante (TaskDetailDrawer) */}

@@ -1,12 +1,42 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import MobileBottomNav from '@/components/layout/MobileBottomNav'
 import { Menu, X } from 'lucide-react'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Sincronización global en segundo plano de acciones guardadas offline
+  useEffect(() => {
+    const handleGlobalSync = async () => {
+      try {
+        const { syncOfflineQueue } = await import('@/lib/offlineQueue')
+        const { guardarSesionEstructurada } = await import('@/lib/actions/health')
+        const { actualizarItem } = await import('@/lib/actions/items')
+        await syncOfflineQueue({
+          onSyncWorkout: async (payload) => {
+            const res = await guardarSesionEstructurada(payload)
+            return res.ok
+          },
+          onSyncTask: async (itemId) => {
+            const res = await actualizarItem(itemId, { estado: 'hecho' })
+            return !!res
+          },
+        })
+      } catch (err) {
+        console.warn('[DashboardLayout] Error sincronizando acciones offline:', err)
+      }
+    }
+
+    if (typeof window !== 'undefined' && navigator.onLine) {
+      handleGlobalSync()
+    }
+
+    window.addEventListener('online', handleGlobalSync)
+    return () => window.removeEventListener('online', handleGlobalSync)
+  }, [])
 
   return (
     <div className="dashboard-layout">

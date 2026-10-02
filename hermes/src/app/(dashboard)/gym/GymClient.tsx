@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useTransition } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import {
   Dumbbell, Plus, Trash2, TrendingUp, Loader2, Check, Edit2, Play,
@@ -80,8 +80,11 @@ export default function GymClient({
   historialPrevio = {},
   recordsPersonales = {}
 }: GymClientProps) {
+  const router = useRouter()
   const { showToast } = useToast()
   const [tabActiva, setTabActiva] = useState<'historial' | 'plantillas'>('plantillas')
+  const [rutinas, setRutinas] = useState<RutinaGym[]>(rutinasIniciales)
+  useEffect(() => { setRutinas(rutinasIniciales) }, [rutinasIniciales])
   const [ejercicioFiltro, setEjercicioFiltro] = useState(ejerciciosUnicos[0] ?? 'Press de Banca')
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [guardando, setGuardando] = useState(false)
@@ -138,8 +141,8 @@ export default function GymClient({
 
   // Sincronización automática de entrenamientos guardados offline al recuperar cobertura
   useEffect(() => {
-    const handleSync = () => {
-      syncOfflineQueue({
+    const handleSync = async () => {
+      const syncedCount = await syncOfflineQueue({
         onSyncWorkout: async (payload) => {
           const res = await guardarSesionEstructurada(payload)
           return res.ok
@@ -148,6 +151,9 @@ export default function GymClient({
           showToast({ message: msg, type: 'success' })
         },
       })
+      if (syncedCount > 0) {
+        router.refresh()
+      }
     }
 
     if (typeof window !== 'undefined' && navigator.onLine) {
@@ -156,7 +162,7 @@ export default function GymClient({
 
     window.addEventListener('online', handleSync)
     return () => window.removeEventListener('online', handleSync)
-  }, [showToast])
+  }, [showToast, router])
 
   // Timer de descanso
   useEffect(() => {
@@ -399,34 +405,63 @@ export default function GymClient({
     if (!sesionActiva) return
     setGuardando(true)
 
-    const duracionSegundos = Math.round((Date.now() - sesionActiva.iniciadoAt) / 1000)
+    const duracionSegundos = Math.round((Date.now() - (sesionActiva.iniciadoAt || Date.now())) / 1000)
     
-    const payloadEjercicios: EjercicioSesionInput[] = sesionActiva.ejercicios.map(ej => ({
+    // Filtrar ejercicios incluidos
+    const ejerciciosParaGuardar = sesionActiva.ejercicios.filter(ej => ej.completado)
+    if (ejerciciosParaGuardar.length === 0) {
+      showToast({ message: 'No hay ejercicios marcados como incluidos para guardar', type: 'error' })
+      setGuardando(false)
+      return
+    }
+
+    const payloadEjercicios: EjercicioSesionInput[] = ejerciciosParaGuardar.map(ej => ({
       nombre: ej.nombre,
       completado: ej.completado,
       descanso: ej.descanso,
       notasGuia: ej.notasGuia,
       series: ej.series.map(s => ({
         numero_serie: s.numero_serie,
-        peso_kg: s.peso_kg,
-        repeticiones: s.repeticiones,
+        peso_kg: typeof s.peso_kg === 'number' && !isNaN(s.peso_kg) ? Math.max(0, s.peso_kg) : 0,
+        repeticiones: parseInt(String(s.repeticiones)) || 0,
         rir: s.rir,
         completada: s.completada
       }))
     }))
 
     const sessionPayload = {
-      fecha: sesionActiva.fecha,
+      fecha: sesionActiva.fecha || new Date().toISOString().split('T')[0],
       plantillaId: sesionActiva.plantillaId,
       nombreDia: sesionActiva.nombreDia,
       duracionSegundos,
       ejercicios: payloadEjercicios
     }
 
+    // Preparar registros optimistas para ver el entreno inmediatamente en el Historial
+    const registrosOptimistas: RutinaGym[] = payloadEjercicios.map(ej => {
+      const seriesCompletadas = ej.series.filter(s => s.completada)
+      const seriesUsar = seriesCompletadas.length > 0 ? seriesCompletadas : ej.series
+      const maxPeso = Math.max(...seriesUsar.map(s => s.peso_kg), 0)
+      const repsFormato = seriesUsar.map(s => s.repeticiones).join('-')
+      const rirValores = seriesUsar.map(s => s.rir).filter(Boolean)
+      const rirTexto = rirValores.length > 0 ? `RIR ${rirValores[0]}` : undefined
+      return {
+        id: `optimistic-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        fecha: sessionPayload.fecha,
+        ejercicio: ej.nombre,
+        series: Math.max(seriesUsar.length, 1),
+        repeticiones: repsFormato || '10',
+        peso_kg: maxPeso > 0 ? maxPeso : undefined,
+        notas: rirTexto,
+        created_at: new Date().toISOString()
+      }
+    })
+
     try {
       // Si el móvil está sin cobertura (sótano del gym), encolar en local inmediatamente
       if (typeof window !== 'undefined' && !navigator.onLine) {
         enqueueOfflineAction('guardar_entrenamiento', sessionPayload)
+        setRutinas(prev => [...registrosOptimistas, ...prev])
         localStorage.removeItem(STORAGE_KEY)
         setSesionActiva(null)
         setTimerRest(null)
@@ -442,6 +477,7 @@ export default function GymClient({
       const res = await guardarSesionEstructurada(sessionPayload)
 
       if (res.ok) {
+        setRutinas(prev => [...registrosOptimistas, ...prev])
         localStorage.removeItem(STORAGE_KEY)
         setSesionActiva(null)
         setTimerRest(null)
@@ -451,23 +487,19 @@ export default function GymClient({
           duration: 6000
         })
         setTabActiva('historial')
+        router.refresh()
       } else {
         showToast({ message: res.mensaje || 'Error al guardar el entrenamiento', type: 'error' })
       }
     } catch (err: any) {
       console.warn('Fallo de red al guardar entrenamiento, encolando localmente:', err)
-      enqueueOfflineAction('guardar_entrenamiento', {
-        fecha: sesionActiva.fecha,
-        plantillaId: sesionActiva.plantillaId,
-        nombreDia: sesionActiva.nombreDia,
-        duracionSegundos: Math.round((Date.now() - sesionActiva.iniciadoAt) / 1000),
-        ejercicios: payloadEjercicios
-      })
+      enqueueOfflineAction('guardar_entrenamiento', sessionPayload)
+      setRutinas(prev => [...registrosOptimistas, ...prev])
       localStorage.removeItem(STORAGE_KEY)
       setSesionActiva(null)
       setTimerRest(null)
       showToast({
-        message: 'Guardado localmente sin conexión. Se sincronizará en cuanto haya cobertura.',
+        message: 'Guardado en tu móvil sin conexión. Se sincronizará en cuanto haya cobertura.',
         type: 'info',
         duration: 7000
       })
@@ -500,7 +532,7 @@ export default function GymClient({
     if (!form.ejercicio.trim()) return
     setGuardando(true)
     try {
-      await crearRutinaGym({
+      const nueva = await crearRutinaGym({
         ejercicio: form.ejercicio.trim(),
         series: form.series,
         repeticiones: form.repeticiones?.trim() || undefined,
@@ -508,11 +540,28 @@ export default function GymClient({
         fecha: form.fecha,
         notas: form.notes.trim() || undefined,
       })
+      if (nueva) {
+        setRutinas(prev => [nueva, ...prev])
+      }
       setMostrarFormulario(false)
       setForm({ ejercicio: '', series: 3, repeticiones: '10', peso_kg: 0, fecha: new Date().toISOString().split('T')[0], notes: '' })
       showToast({ message: 'Ejercicio registrado en el historial', type: 'success' })
+      router.refresh()
     } finally {
       setGuardando(false)
+    }
+  }
+
+  // Eliminar rutina con actualización optimista
+  async function handleEliminarRutina(id: string) {
+    if (!confirm('¿Eliminar este registro del historial?')) return
+    setRutinas(prev => prev.filter(r => r.id !== id))
+    try {
+      await eliminarRutinaGym(id)
+      showToast({ message: 'Registro eliminado del historial', type: 'info' })
+      router.refresh()
+    } catch {
+      showToast({ message: 'Error al eliminar registro', type: 'error' })
     }
   }
 
@@ -524,7 +573,7 @@ export default function GymClient({
   }
 
   // Datos para la gráfica de progresión
-  const datosGrafica = rutinasIniciales
+  const datosGrafica = rutinas
     .filter(r => r.ejercicio.toLowerCase() === ejercicioFiltro.toLowerCase() && r.peso_kg)
     .sort((a, b) => a.fecha.localeCompare(b.fecha))
     .map(r => ({
@@ -535,7 +584,7 @@ export default function GymClient({
     }))
 
   // Agrupar rutinas por fecha
-  const porFecha = rutinasIniciales.reduce<Record<string, RutinaGym[]>>((acc, r) => {
+  const porFecha = rutinas.reduce<Record<string, RutinaGym[]>>((acc, r) => {
     if (!acc[r.fecha]) acc[r.fecha] = []
     acc[r.fecha].push(r)
     return acc
@@ -909,7 +958,7 @@ export default function GymClient({
                               </span>
                             </div>
                             <button
-                              onClick={() => eliminarRutinaGym(r.id)}
+                              onClick={() => handleEliminarRutina(r.id)}
                               className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-neutral-800 transition-all text-red-400"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1004,8 +1053,27 @@ export default function GymClient({
                     {/* Fila del ejercicio: Nombre + Descanso + Acciones */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-800/80 pb-2.5">
                       <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-bold text-sm text-neutral-100">{ej.nombre}</h4>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSesionActiva(actual => {
+                                if (!actual) return null
+                                const copy = { ...actual, ejercicios: [...actual.ejercicios] }
+                                copy.ejercicios[ejIdx] = { ...copy.ejercicios[ejIdx], completado: !ej.completado }
+                                return copy
+                              })
+                            }}
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
+                              ej.completado
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                : 'bg-neutral-800 text-neutral-400 border-white/10 hover:text-neutral-200'
+                            }`}
+                            title={ej.completado ? 'Ejercicio incluido (haz clic para omitirlo)' : 'Ejercicio omitido (haz clic para incluirlo)'}
+                          >
+                            {ej.completado ? '✓ Incluido' : '○ Omitido'}
+                          </button>
+                          <h4 className={`font-bold text-sm ${ej.completado ? 'text-neutral-100' : 'text-neutral-500 line-through'}`}>{ej.nombre}</h4>
                           {ej.descanso && (
                             <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
                               ⏱️ {ej.descanso}
@@ -1044,7 +1112,7 @@ export default function GymClient({
                     </div>
 
                     {/* Tabla de series estructurada */}
-                    <div className="space-y-2">
+                    <div className={`space-y-2 transition-opacity ${ej.completado ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                       <div className="grid grid-cols-12 gap-2 text-[10px] uppercase font-semibold text-neutral-400 px-2">
                         <span className="col-span-2 text-center">Serie</span>
                         <span className="col-span-3 text-center">Peso (kg)</span>

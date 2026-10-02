@@ -24,6 +24,8 @@ interface NewListModalProps {
   onUpdated?: (actualizado: Proyecto) => void
   onDeleted?: (id: string) => void
   proyectoEditar?: Proyecto | null
+  parentIdInicial?: string | null
+  proyectosDisponibles?: Proyecto[]
 }
 
 export default function NewListModal({
@@ -33,11 +35,14 @@ export default function NewListModal({
   onUpdated,
   onDeleted,
   proyectoEditar,
+  parentIdInicial,
+  proyectosDisponibles = [],
 }: NewListModalProps) {
   const { showToast } = useToast()
   const [nombre, setNombre] = useState('')
   const [color, setColor] = useState(PALETA_COLORES[0].hex)
   const [descripcion, setDescripcion] = useState('')
+  const [parentId, setParentId] = useState<string | null>(parentIdInicial || null)
   const [guardando, setGuardando] = useState(false)
   const [confirmandoEliminar, setConfirmandoEliminar] = useState(false)
 
@@ -48,13 +53,21 @@ export default function NewListModal({
       setNombre(proyectoEditar.nombre)
       setColor(proyectoEditar.color || PALETA_COLORES[0].hex)
       setDescripcion(proyectoEditar.descripcion || '')
+      setParentId(proyectoEditar.parent_id || null)
     } else {
       setNombre('')
-      setColor(PALETA_COLORES[0].hex)
+      const defaultParent = parentIdInicial || null
+      setParentId(defaultParent)
+      if (defaultParent) {
+        const parentProj = proyectosDisponibles.find(p => p.id === defaultParent)
+        setColor(parentProj?.color || PALETA_COLORES[0].hex)
+      } else {
+        setColor(PALETA_COLORES[0].hex)
+      }
       setDescripcion('')
     }
     setConfirmandoEliminar(false)
-  }, [proyectoEditar, isOpen])
+  }, [proyectoEditar, isOpen, parentIdInicial, proyectosDisponibles])
 
   if (!isOpen) return null
 
@@ -70,6 +83,7 @@ export default function NewListModal({
           nombre: nombreLimpio,
           color,
           descripcion: descripcion.trim() || undefined,
+          parent_id: parentId || null,
         })
         onUpdated?.(actualizado)
         showToast({ message: `Lista "${nombreLimpio}" actualizada`, type: 'success' })
@@ -78,9 +92,10 @@ export default function NewListModal({
           nombre: nombreLimpio,
           color,
           descripcion: descripcion.trim() || undefined,
+          parent_id: parentId || null,
         })
         onCreated(creado)
-        showToast({ message: `Lista "${nombreLimpio}" creada con éxito`, type: 'success' })
+        showToast({ message: parentId ? `Sublista "${nombreLimpio}" creada con éxito` : `Lista "${nombreLimpio}" creada con éxito`, type: 'success' })
       }
       onClose()
     } catch (err: any) {
@@ -107,6 +122,9 @@ export default function NewListModal({
     }
   }
 
+  const parentObj = proyectosDisponibles.find(p => p.id === parentId)
+  const posiblesPadres = proyectosDisponibles.filter(p => !proyectoEditar || p.id !== proyectoEditar.id)
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in"
@@ -127,10 +145,16 @@ export default function NewListModal({
             </div>
             <div>
               <h2 className="text-base font-bold" style={{ letterSpacing: '0px' }}>
-                {esEdicion ? 'Editar Lista / Asignatura' : 'Nueva Lista o Asignatura'}
+                {esEdicion
+                  ? 'Editar Lista / Asignatura'
+                  : parentObj
+                  ? `Nueva Sublista en "${parentObj.nombre}"`
+                  : 'Nueva Lista o Asignatura'}
               </h2>
               <p className="text-xs text-neutral-400">
-                Organiza tus tareas estilo Microsoft To Do
+                {parentObj
+                  ? `Se agrupará dentro de ${parentObj.nombre}`
+                  : 'Organiza tus tareas estilo Microsoft To Do'}
               </p>
             </div>
           </div>
@@ -145,10 +169,38 @@ export default function NewListModal({
 
         {/* Formulario */}
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Ubicación / Lista Padre */}
+          <div>
+            <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+              Ubicación / Lista principal
+            </label>
+            <select
+              value={parentId || ''}
+              onChange={e => {
+                const val = e.target.value || null
+                setParentId(val)
+                if (val) {
+                  const p = proyectosDisponibles.find(item => item.id === val)
+                  if (p?.color) setColor(p.color)
+                }
+              }}
+              className="input w-full bg-neutral-950/70 border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-neutral-200 focus:border-purple-500/60"
+            >
+              <option value="" className="bg-neutral-900 text-neutral-200">
+                Ninguna (Lista principal independiente)
+              </option>
+              {posiblesPadres.map(p => (
+                <option key={p.id} value={p.id} className="bg-neutral-900 text-neutral-200">
+                  📁 Sublista de: {p.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Nombre de la Asignatura / Lista */}
           <div>
             <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
-              Nombre de la asignatura o lista *
+              {parentObj ? 'Nombre de la sublista *' : 'Nombre de la asignatura o lista *'}
             </label>
             <input
               type="text"
@@ -156,7 +208,7 @@ export default function NewListModal({
               required
               value={nombre}
               onChange={e => setNombre(e.target.value)}
-              placeholder="Ej: Aprendizaje Estadístico, TFG, Inglés..."
+              placeholder={parentObj ? `Ej: Asignatura de ${parentObj.nombre}, Módulo 1...` : "Ej: Aprendizaje Estadístico, TFG, Inglés..."}
               className="input w-full bg-neutral-950/70 border-white/10 rounded-xl px-3.5 py-2.5 text-sm placeholder:text-neutral-500 focus:border-purple-500/60"
             />
           </div>
