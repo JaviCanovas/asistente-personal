@@ -5,7 +5,7 @@
 // 3. Navigation Preload y fallback instantáneo a caché para navegación.
 // 4. Actualización controlada mediante SKIP_WAITING.
 
-const SW_VERSION = 'hermes-v1.0.0';
+const SW_VERSION = 'hermes-v1.0.1';
 const SHELL_CACHE = `hermes-shell-${SW_VERSION}`;
 const STATIC_CACHE = `hermes-static-${SW_VERSION}`;
 
@@ -18,8 +18,9 @@ const PRECACHE_ASSETS = [
   '/apple-touch-icon.png',
 ];
 
-// Instalación: precachear recursos base del shell
+// Instalación: precachear recursos base del shell y activar inmediatamente
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(SHELL_CACHE).then((cache) => {
       return cache.addAll(PRECACHE_ASSETS);
