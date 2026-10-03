@@ -264,20 +264,36 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
     }
 
     if (seleccionId === 'planeadas') {
-      return !!t.fecha_limite
+      return !!(t.fecha_limite || t.fecha_evento)
+    }
+
+    if (seleccionId === 'todas') {
+      return t.tipo === 'tarea' || !!t.proyecto_id
     }
 
     return true
   })
 
-  // Partición entre activas y completadas para la vista actual
-  const tareasActivas = tareasDeLaVista.filter(t => t.estado !== 'hecho' && t.estado !== 'archivado')
+  // Partición entre activas y completadas para la vista actual, con ordenación preferencial (ℹ️ Evaluación al inicio, luego fechas)
+  const tareasActivas = tareasDeLaVista
+    .filter(t => t.estado !== 'hecho' && t.estado !== 'archivado')
+    .sort((a, b) => {
+      if (a.titulo.includes('ℹ️ Evaluación')) return -1
+      if (b.titulo.includes('ℹ️ Evaluación')) return 1
+      const dateA = (a.fecha_limite || a.fecha_evento || '').split('T')[0]
+      const dateB = (b.fecha_limite || b.fecha_evento || '').split('T')[0]
+      if (dateA && dateB) return dateA.localeCompare(dateB)
+      if (dateA) return 1
+      if (dateB) return -1
+      return 0
+    })
   const tareasCompletadas = tareasDeLaVista.filter(t => t.estado === 'hecho')
 
   // Agrupaciones para vista "Planeadas"
-  const tareasVencidas = tareasActivas.filter(t => t.fecha_limite && t.fecha_limite.split('T')[0] < hoyStr)
-  const tareasParaHoy = tareasActivas.filter(t => t.fecha_limite && t.fecha_limite.split('T')[0] === hoyStr)
-  const tareasFuturas = tareasActivas.filter(t => t.fecha_limite && t.fecha_limite.split('T')[0] > hoyStr)
+  const getFechaItem = (t: Item) => (t.fecha_limite || t.fecha_evento)?.split('T')[0] || ''
+  const tareasVencidas = tareasActivas.filter(t => getFechaItem(t) && getFechaItem(t) < hoyStr)
+  const tareasParaHoy = tareasActivas.filter(t => getFechaItem(t) && getFechaItem(t) === hoyStr)
+  const tareasFuturas = tareasActivas.filter(t => getFechaItem(t) && getFechaItem(t) > hoyStr)
 
   // Conteos dinámicos para las vistas inteligentes
   const getSmartCount = (id: VistaId) => {

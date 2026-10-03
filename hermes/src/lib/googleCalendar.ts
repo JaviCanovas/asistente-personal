@@ -98,26 +98,49 @@ export async function getAuthenticatedAuthClient() {
 // ============================================================
 
 function mapearItemAEventoGoogle(item: Item) {
-  const fechaStr = item.tipo === 'evento' ? item.fecha_evento : item.fecha_limite
-  if (!fechaStr) return null
+  const fechaInicioRaw = item.tipo === 'evento' ? item.fecha_evento : item.fecha_limite
+  if (!fechaInicioRaw) return null
 
-  // Google exige fechas en formato ISO para el timezone. Como Hermes guarda TIMESTAMPTZ, lo convertimos
-  const startDateTime = new Date(fechaStr).toISOString()
-  
-  // Por defecto dura 1 hora
-  const endDateTime = new Date(new Date(fechaStr).getTime() + 60 * 60 * 1000).toISOString()
+  const fechaFinRaw = item.fecha_limite || item.fecha_evento || fechaInicioRaw
+  const fechaInicioStr = fechaInicioRaw.split('T')[0]
+  const fechaFinStr = fechaFinRaw.split('T')[0]
+
+  const isAllDay = !item.hora_inicio
+
+  let startObj: any = {}
+  let endObj: any = {}
+
+  if (isAllDay) {
+    startObj = { date: fechaInicioStr }
+    const endDateObj = new Date(fechaFinStr)
+    endDateObj.setDate(endDateObj.getDate() + 1)
+    const nextDayStr = endDateObj.toISOString().split('T')[0]
+    endObj = { date: nextDayStr }
+  } else {
+    const startIso = `${fechaInicioStr}T${item.hora_inicio}:00`
+    const endIso = `${fechaFinStr}T${item.hora_fin || '23:59'}:00`
+    startObj = { dateTime: new Date(startIso).toISOString(), timeZone: 'Europe/Madrid' }
+    endObj = { dateTime: new Date(endIso).toISOString(), timeZone: 'Europe/Madrid' }
+  }
+
+  const overrides: { method: string; minutes: number }[] = []
+  const meta = (item.metadata || {}) as any
+  if (meta.tiene_recordatorios || meta.recordatorios?.length || item.titulo.includes('⚠️')) {
+    // Recordatorio 7 días antes (10080 min) y 1 día antes (1440 min)
+    overrides.push({ method: 'popup', minutes: 7 * 24 * 60 })
+    overrides.push({ method: 'popup', minutes: 1 * 24 * 60 })
+  }
+
+  const remindersConfig = overrides.length > 0
+    ? { useDefault: false, overrides }
+    : undefined
 
   return {
     summary: `${item.tipo === 'tarea' ? '☑️ ' : '📅 '}${item.titulo}`,
     description: `${item.descripcion || ''}\n\nCreado desde Hermes Planner.`,
-    start: {
-      dateTime: startDateTime,
-      timeZone: 'Europe/Madrid',
-    },
-    end: {
-      dateTime: endDateTime,
-      timeZone: 'Europe/Madrid',
-    },
+    start: startObj,
+    end: endObj,
+    reminders: remindersConfig,
   }
 }
 
