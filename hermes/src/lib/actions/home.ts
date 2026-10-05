@@ -3,7 +3,7 @@
 import { getItemsActivos } from '@/lib/actions/items'
 import { getPlantillasGym, getRutinasGym } from '@/lib/actions/health'
 import { priorizarItemsDeHoy, obtenerProximosEventos } from '@/lib/ai/prioritize'
-import { isGoogleConnected, obtenerEventosGoogleProximos } from '@/lib/googleCalendar'
+import { isGoogleConnected, obtenerEventosGoogleProximos, sincronizarBorradosGoogle } from '@/lib/googleCalendar'
 import type { Item, ItemPriorizado, PlantillaGym, RutinaGym } from '@/lib/types'
 
 export interface HomeData {
@@ -14,11 +14,20 @@ export interface HomeData {
 }
 
 export async function getHomeData(): Promise<HomeData> {
-  const [items, plantillas, rutinas, googleConnected] = await Promise.all([
+  const googleConnected = await isGoogleConnected()
+
+  if (googleConnected) {
+    try {
+      await sincronizarBorradosGoogle()
+    } catch (e) {
+      console.error('[getHomeData] Error al sincronizar borrados de Google:', e)
+    }
+  }
+
+  const [items, plantillas, rutinas] = await Promise.all([
     getItemsActivos(),
     getPlantillasGym(),
     getRutinasGym(),
-    isGoogleConnected(),
   ])
 
   let googleEventos: Item[] = []

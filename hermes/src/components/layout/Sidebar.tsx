@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import {
   Inbox,
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { checkGoogleConnection } from '@/lib/actions/health'
+import { sincronizarGoogleAction } from '@/lib/actions/items'
 
 interface NavItem {
   href: string
@@ -50,6 +51,20 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname()
+  const router = useRouter()
+  const [isSyncing, setIsSyncing] = useState(false)
+
+  const handleSync = async () => {
+    setIsSyncing(true)
+    try {
+      await sincronizarGoogleAction()
+      router.refresh()
+    } catch {
+      //
+    } finally {
+      setIsSyncing(false)
+    }
+  }
 
   // Comprobación cacheada para evitar llamadas innecesarias al servidor en cada navegación
   const { data: isConnected } = useQuery({
@@ -261,10 +276,21 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <span>Sincronizando...</span>
             </div>
           ) : googleConnected ? (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium"
+            <div className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium"
               style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.12)', color: '#34d399' }}>
-              <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-              <span>Google Calendar activo</span>
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Google Calendar activo</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing}
+                title="Sincronizar ahora con Google Calendar"
+                className="p-1 rounded-md hover:bg-emerald-500/15 transition-colors cursor-pointer text-emerald-400"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           ) : (
             <Link

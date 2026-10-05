@@ -43,6 +43,16 @@ export async function getItems(filtros?: {
     return items
   }
 
+  // Sincronizar periódicamente eventos eliminados en Google Calendar (cooldown 15s)
+  try {
+    const { isGoogleConnected, sincronizarBorradosGoogle } = await import('@/lib/googleCalendar')
+    if (await isGoogleConnected()) {
+      await sincronizarBorradosGoogle()
+    }
+  } catch (e) {
+    // Si Google no responde, no bloquear la carga de la app
+  }
+
   const supabase = await createClient()
   let query = supabase
     .from('items')
@@ -63,6 +73,17 @@ export async function getItems(filtros?: {
 
 export async function getItemsActivos() {
   if (!isSupabaseConfigured()) return ITEMS_DEMO.filter(i => ['activo', 'sin_procesar'].includes(i.estado))
+
+  // Sincronizar periódicamente eventos eliminados en Google Calendar (cooldown 15s)
+  try {
+    const { isGoogleConnected, sincronizarBorradosGoogle } = await import('@/lib/googleCalendar')
+    if (await isGoogleConnected()) {
+      await sincronizarBorradosGoogle()
+    }
+  } catch (e) {
+    // Silencioso
+  }
+
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('items')
@@ -84,8 +105,11 @@ export async function crearItem(data: {
   prioridad?: ItemPrioridad
   fecha_limite?: string
   fecha_evento?: string
+  hora_inicio?: string
+  hora_fin?: string
   proyecto_id?: string
   etiquetas?: string[]
+  origen?: string
 }) {
   if (!isSupabaseConfigured()) {
     console.warn('[crearItem] Supabase no configurado — item no persistido')
@@ -116,9 +140,11 @@ export async function crearItem(data: {
       prioridad:    data.prioridad ?? 'media',
       fecha_limite,
       fecha_evento,
+      hora_inicio:  data.hora_inicio,
+      hora_fin:     data.hora_fin,
       proyecto_id:  data.proyecto_id,
       etiquetas:    data.etiquetas ?? [],
-      origen:       'web',
+      origen:       data.origen ?? 'web',
     })
     .select()
     .single()
@@ -152,8 +178,39 @@ export async function crearItem(data: {
   return item
 }
 export async function actualizarItem(id: string, data: Partial<Item>) {
+  if (id.startsWith('google-')) {
+    const googleEventId = id.replace(/^google-/, '')
+    const { actualizarEventoGoogle, invalidarCacheGoogle } = await import('@/lib/googleCalendar')
+    await actualizarEventoGoogle({ ...data, id } as Item, googleEventId)
+    invalidarCacheGoogle()
+    revalidatePath('/')
+    revalidatePath('/calendario')
+    revalidatePath('/tareas')
+    revalidatePath('/hoy')
+    return { id, ...data } as Item
+  }
+
   if (!isSupabaseConfigured()) return { ...ITEMS_DEMO[0], ...data }
   const supabase = await createClient()
+
+  // Si se archiva, desvincular y eliminar el evento en Google Calendar
+  if (data.estado === 'archivado') {
+    const { data: itemParaArchivar } = await supabase
+      .from('items')
+      .select('google_event_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (itemParaArchivar?.google_event_id) {
+      try {
+        const { eliminarEventoGoogle, invalidarCacheGoogle } = await import('@/lib/googleCalendar')
+        await eliminarEventoGoogle(itemParaArchivar.google_event_id)
+        invalidarCacheGoogle()
+        await supabase.from('items').update({ google_event_id: null }).eq('id', id)
+      } catch (gErr) {
+        console.error('[actualizarItem] Error desvinculando de Google Calendar al archivar:', gErr)
+      }
+    }
+  }
 
   const hayCambioFecha = data.fecha_limite !== undefined || data.fecha_evento !== undefined || data.tipo !== undefined
 
@@ -282,6 +339,26 @@ export async function marcarHecho(id: string, hecho: boolean = true) {
 }
 
 export async function eliminarItem(id: string) {
+  if (id.startsWith('google-')) {
+    const googleEventId = id.replace(/^google-/, '')
+    const { eliminarEventoGoogle, invalidarCacheGoogle } = await import('@/lib/googleCalendar')
+    await eliminarEventoGoogle(googleEventId)
+    invalidarCacheGoogle()
+
+    if (isSupabaseConfigured()) {
+      const supabase = await createClient()
+      await supabase.from('items').delete().eq('google_event_id', googleEventId)
+    }
+
+    revalidatePath('/')
+    revalidatePath('/calendario')
+    revalidatePath('/tareas')
+    revalidatePath('/hoy')
+    revalidatePath('/inbox')
+    revalidatePath('/mi-dia')
+    return
+  }
+
   if (!isSupabaseConfigured()) return
   const supabase = await createClient()
 
@@ -290,12 +367,13 @@ export async function eliminarItem(id: string) {
     .from('items')
     .select('google_event_id')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (item?.google_event_id) {
     try {
-      const { eliminarEventoGoogle } = await import('@/lib/googleCalendar')
+      const { eliminarEventoGoogle, invalidarCacheGoogle } = await import('@/lib/googleCalendar')
       await eliminarEventoGoogle(item.google_event_id)
+      invalidarCacheGoogle()
     } catch (gErr) {
       console.error('[eliminarItem] Error eliminando evento Google Calendar:', gErr)
     }
@@ -304,10 +382,33 @@ export async function eliminarItem(id: string) {
   const { error } = await supabase.from('items').delete().eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/')
+  revalidatePath('/calendario')
   revalidatePath('/tareas')
   revalidatePath('/hoy')
   revalidatePath('/inbox')
   revalidatePath('/mi-dia')
+}
+
+// Acción de servidor para forzar sincronización manual bidireccional con Google Calendar
+export async function sincronizarGoogleAction() {
+  const { isGoogleConnected, sincronizarBorradosGoogle, sincronizarPendientesGoogle, invalidarCacheGoogle } = await import('@/lib/googleCalendar')
+  const connected = await isGoogleConnected()
+  if (!connected) {
+    return { success: false, message: 'Google Calendar no está conectado' }
+  }
+
+  invalidarCacheGoogle()
+  const borradosRes = await sincronizarBorradosGoogle({ force: true })
+  await sincronizarPendientesGoogle()
+
+  revalidatePath('/')
+  revalidatePath('/calendario')
+  revalidatePath('/tareas')
+  revalidatePath('/hoy')
+  revalidatePath('/inbox')
+  revalidatePath('/mi-dia')
+
+  return { success: true, eliminados: borradosRes.eliminados }
 }
 
 export async function procesarItemInbox(

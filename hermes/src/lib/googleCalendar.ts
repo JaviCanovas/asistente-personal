@@ -207,6 +207,11 @@ export async function eliminarEventoGoogle(eventId: string): Promise<boolean> {
     return true
   } catch (err: any) {
     console.error('[eliminarEventoGoogle] Error deleting event:', err.message)
+    // Si el evento ya fue borrado en Google (404 o 410), igual invalidamos la caché
+    if (err.code === 404 || err.code === 410) {
+      invalidarCacheGoogle()
+      return true
+    }
     return false
   }
 }
@@ -219,11 +224,121 @@ export function invalidarCacheGoogle() {
   googleEventsCache.clear()
 }
 
+let lastSyncBorrados = 0
+const SYNC_BORRADOS_COOLDOWN_MS = 15 * 1000 // 15 segundos entre comprobaciones automáticas
+
+// 3.b Sincronizar eventos eliminados en Google Calendar hacia la base de datos de Hermes
+export async function sincronizarBorradosGoogle(options?: { force?: boolean }): Promise<{ eliminados: number; ids: string[] }> {
+  const force = options?.force ?? false
+  const now = Date.now()
+
+  // Evitar sobrecargar la API de Google si se llama repetidamente en menos de 15s, salvo force = true
+  if (!force && now - lastSyncBorrados < SYNC_BORRADOS_COOLDOWN_MS) {
+    return { eliminados: 0, ids: [] }
+  }
+
+  const auth = await getAuthenticatedAuthClient()
+  if (!auth) {
+    return { eliminados: 0, ids: [] }
+  }
+
+  const supabase = await createClient()
+
+  // Buscar todos los items en Supabase que tienen vinculado un google_event_id
+  const { data: dbItems, error: dbError } = await supabase
+    .from('items')
+    .select('id, titulo, google_event_id')
+    .not('google_event_id', 'is', null)
+
+  if (dbError || !dbItems || dbItems.length === 0) {
+    lastSyncBorrados = now
+    return { eliminados: 0, ids: [] }
+  }
+
+  try {
+    const calendar = google.calendar({ version: 'v3', auth })
+
+    // Ventana amplia: desde hace 90 días hasta los próximos 365 días
+    const timeMin = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString()
+    const timeMax = new Date(now + 365 * 24 * 60 * 60 * 1000).toISOString()
+
+    const res = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      showDeleted: true,
+      maxResults: 2500,
+    })
+
+    const cancelledGoogleIds = new Set<string>()
+    const activeGoogleIds = new Set<string>()
+
+    for (const ev of (res.data.items || [])) {
+      if (!ev.id) continue
+      if (ev.status === 'cancelled') {
+        cancelledGoogleIds.add(ev.id)
+      } else {
+        activeGoogleIds.add(ev.id)
+      }
+    }
+
+    const idsToDelete: string[] = []
+
+    // Comprobar cada item de la BD
+    for (const item of dbItems) {
+      if (!item.google_event_id) continue
+
+      if (cancelledGoogleIds.has(item.google_event_id)) {
+        // Evento cancelado/en papelera en Google Calendar
+        idsToDelete.push(item.id)
+      } else if (!activeGoogleIds.has(item.google_event_id)) {
+        // No está en la lista de eventos activos. Verificar si fue borrado permanentemente (404/410)
+        try {
+          const gRes = await calendar.events.get({
+            calendarId: 'primary',
+            eventId: item.google_event_id,
+          })
+          if (gRes.data.status === 'cancelled') {
+            idsToDelete.push(item.id)
+          }
+        } catch (err: any) {
+          if (err.code === 404 || err.code === 410) {
+            idsToDelete.push(item.id)
+          }
+        }
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      console.log(`[sincronizarBorradosGoogle] Eliminando ${idsToDelete.length} items borrados en Google Calendar...`)
+      
+      // Borrar de Supabase en lotes de 50
+      for (let i = 0; i < idsToDelete.length; i += 50) {
+        const batch = idsToDelete.slice(i, i + 50)
+        await supabase.from('items').delete().in('id', batch)
+      }
+
+      invalidarCacheGoogle()
+    }
+
+    lastSyncBorrados = now
+    return { eliminados: idsToDelete.length, ids: idsToDelete }
+  } catch (err: any) {
+    console.error('[sincronizarBorradosGoogle] Error al verificar eventos borrados:', err.message)
+    return { eliminados: 0, ids: [] }
+  }
+}
+
 // 4. Obtener eventos de Google Calendar (con soporte de rango y caché)
-export async function obtenerEventosGoogle(options?: { timeMin?: string; timeMax?: string }): Promise<Item[]> {
+export async function obtenerEventosGoogle(options?: { timeMin?: string; timeMax?: string; force?: boolean }): Promise<Item[]> {
   const timeMin = options?.timeMin || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
   const timeMax = options?.timeMax || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
   const cacheKey = `${timeMin}_${timeMax}`
+
+  if (options?.force) {
+    invalidarCacheGoogle()
+  }
 
   const cached = googleEventsCache.get(cacheKey)
   if (cached && Date.now() < cached.expiresAt) {
@@ -244,10 +359,13 @@ export async function obtenerEventosGoogle(options?: { timeMin?: string; timeMax
       timeMin,
       timeMax,
       singleEvents: true,
+      showDeleted: true,
       orderBy: 'startTime',
     })
 
-    const googleEvents = response.data.items || []
+    // Descartar eventos cancelados / eliminados
+    const rawEvents = response.data.items || []
+    const googleEvents = rawEvents.filter(event => event.status !== 'cancelled')
 
     const items: Item[] = googleEvents.map(event => {
       const fechaInicioStr = event.start?.dateTime || event.start?.date || ''

@@ -339,31 +339,31 @@ export default function ItemCard({
         </div>
 
         {/* Acciones */}
-        {!isGoogleCalendar && (
-          <div
-            className="flex items-center gap-1 flex-shrink-0 opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-            style={{ marginTop: 2 }}
-          >
-            {onRemoveFromMyDay && (
-              <button
-                type="button"
-                onClick={() => onRemoveFromMyDay(item.id)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
-                title="Quitar de Mi Día"
-              >
-                <MinusCircle className="w-4 h-4" />
-              </button>
-            )}
-            {onEdit && (
-              <button
-                type="button"
-                onClick={() => onEdit(item)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-                title="Editar"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
+        <div
+          className="flex items-center gap-1 flex-shrink-0 opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+          style={{ marginTop: 2 }}
+        >
+          {!isGoogleCalendar && onRemoveFromMyDay && (
+            <button
+              type="button"
+              onClick={() => onRemoveFromMyDay(item.id)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+              title="Quitar de Mi Día"
+            >
+              <MinusCircle className="w-4 h-4" />
+            </button>
+          )}
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(item)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+              title="Editar"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+          {!isGoogleCalendar && (
             <button
               type="button"
               onClick={handleArchivar}
@@ -372,16 +372,16 @@ export default function ItemCard({
             >
               <Archive className="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              onClick={handleEliminar}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
-              title="Eliminar"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={handleEliminar}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+            title="Eliminar"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -1,23 +1,29 @@
 import { getItems } from '@/lib/actions/items'
 import { getProyectos } from '@/lib/actions/proyectos'
 import CalendarWrapper from '@/components/calendar/CalendarWrapper'
-import { isGoogleConnected, obtenerEventosGoogle } from '@/lib/googleCalendar'
+import { isGoogleConnected, obtenerEventosGoogle, sincronizarBorradosGoogle } from '@/lib/googleCalendar'
 import type { Item } from '@/lib/types'
 
 export const metadata = { title: 'Calendario — Hermes' }
-export const revalidate = 30
+export const revalidate = 0
 
 export default async function CalendarioPage() {
-  const [items, proyectos, googleConnected] = await Promise.all([
+  const googleConnected = await isGoogleConnected()
+
+  // Sincronizar primero los eventos borrados de Google para no traerlos de la base de datos
+  if (googleConnected) {
+    try {
+      await sincronizarBorradosGoogle()
+    } catch (e) {
+      console.error('[CalendarioPage] Error al sincronizar borrados:', e)
+    }
+  }
+
+  const [items, proyectos, googleEventos] = await Promise.all([
     getItems(),
     getProyectos(),
-    isGoogleConnected(),
+    googleConnected ? obtenerEventosGoogle() : Promise.resolve([]),
   ])
-
-  let googleEventos: Item[] = []
-  if (googleConnected) {
-    googleEventos = await obtenerEventosGoogle()
-  }
 
   // Filtrar eventos de Google para no duplicar los que ya existen localmente en Supabase
   const localGoogleEventIds = new Set(

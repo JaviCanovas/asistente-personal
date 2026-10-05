@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   ChevronLeft,
   ChevronRight,
@@ -9,7 +10,8 @@ import {
   Plus,
   Tag,
   AlertCircle,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react'
 import {
   format,
@@ -32,6 +34,8 @@ import { TIPO_CONFIG, PRIORIDAD_CONFIG } from '@/lib/utils'
 import ItemCard from '@/components/items/ItemCard'
 import ItemModal from '@/components/items/ItemModal'
 import { encontrarBloquesLibres } from '@/lib/ai/prioritize'
+import { useToast } from '@/components/ui/Toast'
+import { sincronizarGoogleAction } from '@/lib/actions/items'
 
 interface CalendarioClientProps {
   eventos: Item[]
@@ -42,12 +46,37 @@ interface CalendarioClientProps {
 const DIAS_SEMANA = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
 
 export default function CalendarioClient({ eventos, todosItems, proyectos }: CalendarioClientProps) {
+  const router = useRouter()
+  const { showToast } = useToast()
   const [fechaActual, setFechaActual] = useState(new Date())
   const [diaSeleccionado, setDiaSeleccionado] = useState(new Date())
   const [vista, setVista] = useState<'mes' | 'semana'>('mes')
   const [itemSeleccionado, setItemSeleccionado] = useState<Item | null>(null)
   const [itemEditar, setItemEditar] = useState<Item | null>(null)
   const [modalNuevoAbierto, setModalNuevoAbierto] = useState(false)
+  const [sincronizando, setSincronizando] = useState(false)
+
+  const handleSincronizar = async () => {
+    setSincronizando(true)
+    try {
+      const res = await sincronizarGoogleAction()
+      if (res.success) {
+        showToast({
+          message: res.eliminados && res.eliminados > 0
+            ? `Google Calendar sincronizado (${res.eliminados} eventos eliminados)`
+            : 'Google Calendar sincronizado correctamente',
+          type: 'success'
+        })
+        router.refresh()
+      } else {
+        showToast({ message: res.message || 'Error al sincronizar con Google', type: 'error' })
+      }
+    } catch {
+      showToast({ message: 'Error de conexión con Google', type: 'error' })
+    } finally {
+      setSincronizando(false)
+    }
+  }
 
   // ——— NAVEGACIÓN ———————————————————————————————————————————
   const handlePrev = () => {
@@ -188,6 +217,16 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
+
+          <button
+            onClick={handleSincronizar}
+            disabled={sincronizando}
+            className="btn btn-ghost btn-sm flex items-center gap-1.5 rounded-xl px-3 py-2 border border-neutral-800/80 hover:bg-neutral-800/50 transition-colors text-xs font-semibold text-neutral-300 shrink-0"
+            title="Sincronizar con Google Calendar"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${sincronizando ? 'animate-spin text-purple-400' : 'text-neutral-400'}`} />
+            <span className="hidden sm:inline">{sincronizando ? 'Sincronizando...' : 'Sincronizar'}</span>
+          </button>
 
           <button onClick={() => setModalNuevoAbierto(true)} className="btn btn-primary btn-sm flex items-center gap-1.5 rounded-xl px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 shadow-[0_4px_14px_rgba(99,102,241,0.3)] hover:shadow-[0_4px_20px_rgba(99,102,241,0.45)] hover:-translate-y-0.5 transition-all duration-200 font-bold shrink-0">
             <Plus className="w-4 h-4" />

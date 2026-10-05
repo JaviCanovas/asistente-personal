@@ -1,5 +1,3 @@
-'use server'
-
 import { clasificarItem } from '@/lib/ai/classify'
 import { getItemsActivos } from '@/lib/actions/items'
 import type { ClasificacionSugerida, ItemPrioridad } from '@/lib/types'
@@ -40,8 +38,18 @@ export interface ProcesarMensajeResult {
     descripcion?: string
     prioridad: ItemPrioridad
     fecha_limite?: string
+    fecha_evento?: string
+    hora_inicio?: string
     proyecto_id?: string
     etiquetas?: string[]
+    razon: string
+  }
+  modificarItem?: {
+    itemId: string
+    nuevaFecha?: string
+    nuevaHora?: string
+    nuevoTitulo?: string
+    nuevoTipo?: 'tarea' | 'evento' | 'idea' | 'nota' | 'recordatorio'
     razon: string
   }
   respuesta: string
@@ -134,7 +142,8 @@ function esConsultaBasica(texto: string): boolean {
 export async function procesarMensajeTelegram(
   msg: TelegramMessage,
   allowedChatIds: number[],
-  groqApiKey?: string
+  groqApiKey?: string,
+  contextoConversacional?: string
 ): Promise<ProcesarMensajeResult> {
   const { chatId, text, messageId } = msg
 
@@ -161,7 +170,7 @@ export async function procesarMensajeTelegram(
 
   const texto = text.trim()
 
-  // 2. Detectar comandos
+  // 2. Detectar comandos (/start, /ayuda, /hoy, /tareas)
   if (texto.startsWith('/')) {
     const comando = texto.slice(1).split(' ')[0].toLowerCase()
     const cmd = COMMANDS[comando]
@@ -176,7 +185,20 @@ export async function procesarMensajeTelegram(
     }
   }
 
-  // 3. Detectar si es consulta básica (sin Groq)
+  // 3. Si Groq está disponible, utilizar Groq como motor principal (rápido, contextual, títulos limpios)
+  if (groqApiKey) {
+    console.log(`[handler] Razonando con Groq: "${texto}"`)
+    const decision = await razonarConGroq(texto, groqApiKey, contextoConversacional)
+    console.log(`[handler] Groq respondió: accion=${decision.accion}, titulo=${decision.titulo || 'ninguno'}, tipo=${decision.tipo}`)
+
+    // Si Groq no falló de manera crítica, usamos su decisión
+    if (!decision.razon?.startsWith('Error Groq:')) {
+      return convertirDecisionAGroqResultado(decision, texto)
+    }
+    console.warn('[handler] Groq devolvió error, aplicando respaldo heurístico')
+  }
+
+  // 4. Si es consulta básica (sin Groq)
   if (esConsultaBasica(texto)) {
     return {
       respuesta: 'CONSULTA',
@@ -185,23 +207,10 @@ export async function procesarMensajeTelegram(
     }
   }
 
-  // 4. Intento heurístico primero (rápido)
-  console.log(`[handler] Clasificando: "${texto}"`)
+  // 5. Respaldo heurístico (cuando no hay Groq o falló)
+  console.log(`[handler] Usando clasificador heurístico de respaldo para: "${texto}"`)
   const clasificacion = clasificarItem(texto)
-  console.log(`[handler] Resultado heurístico: tipo=${clasificacion.tipo}, prioridad=${clasificacion.prioridad}, confianza=${clasificacion.confianza}, fecha_limite=${clasificacion.fecha_limite || 'ninguna'}`)
-  const umbralConfirmacion = 0.6
 
-  // 5. Si confianza baja → ir a Groq (razonamiento) si está disponible
-  if (clasificacion.confianza < umbralConfirmacion && groqApiKey) {
-    console.log(`[handler] Confianza baja (${clasificacion.confianza} < ${umbralConfirmacion}), llamando a Groq`)
-    const decision = await razonarConGroq(texto, groqApiKey, undefined)
-    console.log(`[handler] Groq respondió: accion=${decision.accion}, titulo=${decision.titulo || 'ninguno'}`)
-    return convertirDecisionAGroqResultado(decision, texto, clasificacion)
-  }
-
-  console.log(`[handler] Confianza suficiente (${clasificacion.confianza}), usando heurística`)
-
-  // 6. Confianza suficiente → crear item con heurística
   const prioridadMap: Record<string, ItemPrioridad> = {
     baja: 'baja',
     media: 'media',
@@ -209,24 +218,29 @@ export async function procesarMensajeTelegram(
     urgente: 'urgente',
   }
 
+  const tituloLimpio = extractTitulo(texto, clasificacion)
+  const esEvento = clasificacion.tipo === 'evento'
+
   const crearData: ProcesarMensajeResult['crearItem'] = {
-    titulo: extractTitulo(texto, clasificacion),
+    titulo: tituloLimpio,
     tipo: clasificacion.tipo,
     prioridad: prioridadMap[clasificacion.prioridad],
     razon: clasificacion.razon,
   }
 
-  if (clasificacion.fecha_limite) {
+  if (esEvento) {
+    crearData.fecha_evento = clasificacion.fecha_limite
+  } else if (clasificacion.fecha_limite) {
     crearData.fecha_limite = clasificacion.fecha_limite
   }
+
   if (clasificacion.etiquetas?.length) {
     crearData.etiquetas = clasificacion.etiquetas
   }
 
+  const fechaMostrar = clasificacion.fecha_limite ? new Date(clasificacion.fecha_limite).toLocaleDateString('es-ES') : ''
   const confirmacionCreado = `✅ Guardado: "${crearData.titulo}"
-📋 ${clasificacion.tipo.charAt(0).toUpperCase() + clasificacion.tipo.slice(1)} · ${clasificacion.prioridad} prioridad
-${clasificacion.fecha_limite ? '📅 ' + new Date(clasificacion.fecha_limite!).toLocaleDateString('es-ES') : ''}
-💬 ${clasificacion.razon}`
+📋 ${clasificacion.tipo.charAt(0).toUpperCase() + clasificacion.tipo.slice(1)} · ${clasificacion.prioridad} prioridad${fechaMostrar ? '\n📅 ' + fechaMostrar : ''}`
 
   return {
     crearItem: crearData,
@@ -236,68 +250,125 @@ ${clasificacion.fecha_limite ? '📅 ' + new Date(clasificacion.fecha_limite!).t
   }
 }
 
-function convertirDecisionAGroqResultado(decision: GroqDecision, textoOriginal: string, clasificacionHeuristica?: ClasificacionSugerida): ProcesarMensajeResult {
+function convertirDecisionAGroqResultado(
+  decision: GroqDecision,
+  textoOriginal: string
+): ProcesarMensajeResult {
   switch (decision.accion) {
-    case 'crear':
+    case 'crear': {
+      const tipo = decision.tipo || 'tarea'
+      const titulo = decision.titulo || extractTitulo(textoOriginal)
+      const prioridad = decision.prioridad || 'media'
+      const fecha_evento = decision.fecha_evento || (tipo === 'evento' ? decision.fecha_limite : undefined)
+      const fecha_limite = decision.fecha_limite || (tipo !== 'evento' ? decision.fecha_evento : undefined)
+
+      let respuesta = decision.respuesta
+      if (!respuesta) {
+        const fechaLabel = fecha_evento || fecha_limite
+        const horaLabel = decision.hora_inicio ? ` · ${decision.hora_inicio}` : ''
+        respuesta = `✅ ${tipo.charAt(0).toUpperCase() + tipo.slice(1)} anotado: "${titulo}"${fechaLabel ? ' · ' + fechaLabel : ''}${horaLabel}`
+      }
+
       return {
         crearItem: {
-          titulo: decision.titulo || textoOriginal.slice(0, 80),
-          tipo: decision.tipo || 'tarea',
-          prioridad: decision.prioridad || 'media',
-          fecha_limite: decision.fecha_limite,
-          razon: decision.razon || 'Decidido por Hermes (LLM)',
+          titulo,
+          tipo,
+          prioridad,
+          fecha_evento,
+          fecha_limite,
+          hora_inicio: decision.hora_inicio,
+          razon: decision.razon || 'Procesado con IA de Hermes',
         },
-        respuesta: `✅ Guardado: "${decision.titulo || textoOriginal.slice(0, 80)}"
-📋 ${decision.tipo || 'tarea'} · ${decision.prioridad || 'media'} prioridad
-💬 ${decision.razon || ''}`,
+        respuesta,
         esConsulta: false,
+        accionProcesada: 'groq',
+      }
+    }
+
+    case 'modificar': {
+      return {
+        modificarItem: {
+          itemId: decision.item_id_a_modificar || '',
+          nuevaFecha: decision.nueva_fecha,
+          nuevaHora: decision.nueva_hora,
+          nuevoTitulo: decision.nuevo_titulo,
+          nuevoTipo: decision.nuevo_tipo,
+          razon: decision.razon || 'Modificación solicitada',
+        },
+        respuesta: decision.respuesta || '✅ Ítem actualizado correctamente',
+        esConsulta: false,
+        accionProcesada: 'groq',
+      }
+    }
+
+    case 'consultar':
+      return {
+        respuesta: decision.respuesta || 'CONSULTA',
+        esConsulta: true,
         accionProcesada: 'groq',
       }
 
     case 'preguntar':
       return {
-        respuesta: decision.pregunta || '¿Podrías ser más específico sobre qué quieres?',
+        respuesta: decision.pregunta || decision.respuesta || '¿Podrías darme más detalles?',
         esConsulta: false,
         accionProcesada: 'groq',
       }
 
     case 'responder':
-    case 'consultar':
-      return {
-        respuesta: decision.respuesta || 'He procesado tu mensaje.',
-        esConsulta: decision.accion === 'consultar',
-        accionProcesada: 'groq',
-      }
-
     default:
       return {
-        respuesta: 'No he podido interpretar tu mensaje. Escribe /ayuda para ver opciones.',
+        respuesta: decision.respuesta || 'He recibido tu mensaje.',
         esConsulta: false,
         accionProcesada: 'groq',
       }
   }
 }
 
-function extractTitulo(texto: string, clasificacion: ClasificacionSugerida): string {
-  let titulo = texto
+export function extractTitulo(texto: string, clasificacion?: ClasificacionSugerida): string {
+  let titulo = texto.trim()
 
-  // Quitar prefijos de comando explícito
-  const prefijos = [/^(?:tarea|evento|idea|nota|recordatorio|reminder)\s*:\s*/i]
+  // Quitar prefijos de comandos explícitos y fórmulas conversacionales
+  const prefijos = [
+    /^(?:tarea|evento|idea|nota|recordatorio|reminder)\s*:\s*/i,
+    /^(?:recuérda(?:me)?(?:\s+que)?|recordar(?:me)?(?:\s+que)?)\s+/i,
+    /^(?:apunta(?:r)?(?:\s+que)?|anota(?:r)?(?:\s+que)?)\s+/i,
+    /^(?:no\s+olvid(?:es|ar)(?:\s+que)?)\s+/i,
+    /^(?:tengo\s+que|hay\s+que|debo|necesito)\s+/i,
+    /^(?:guarda(?:r)?(?:\s+que)?)\s+/i,
+    /^(?:pon(?:me)?(?:\s+que)?)\s+/i,
+    /^(?:añad(?:e|ir)(?:\s+que)?)\s+/i,
+  ]
+
   for (const p of prefijos) {
-    const match = titulo.match(p)
-    if (match) {
-      titulo = titulo.slice(match[0].length)
-    }
+    titulo = titulo.replace(p, '').trim()
   }
 
-  if (titulo.length > 100) {
-    const match = titulo.match(/^([^.!?\n]{10,100}|[^.!?\n]+)/)
+  // Quitar expresiones temporales iniciales que preceden al evento real
+  // Ej: "el viernes por la noche tengo cena con los pibes" -> "cena con los pibes"
+  // Ej: "este jueves voy al cine con gloria" -> "cine con gloria"
+  titulo = titulo.replace(/^(?:que\s+)?(?:el|este|esta|próximo|proximo)\s+(?:lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo|semana|finde|fin\s+de\s+semana)\s+(?:por\s+la\s+(?:mañana|tarde|noche)\s+)?(?:tengo|hay|voy\s+a\s+tener)?\s*/i, '').trim()
+
+  // Quitar coletillas como "tengo cena..." -> "cena...", "voy al cine..." -> "cine..."
+  titulo = titulo.replace(/^(?:tengo|voy\s+al?)\s+/i, '').trim()
+
+  // Quitar fechas finales si están presentes (ej: "8 de Octubre", "el viernes")
+  titulo = titulo.replace(/\s+(?:el\s+)?\d{1,2}(?:\s+de\s+[a-záéíóúñ]+(?:\s+de\s+\d{2,4})?)?\s*$/i, '').trim()
+  titulo = titulo.replace(/\s+(?:el\s+|este\s+)?(?:lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\s*$/i, '').trim()
+
+  if (titulo.length > 80) {
+    const match = titulo.match(/^([^.!?\n]{10,80})/)
     if (match) {
       titulo = match[0].trim()
     }
   }
 
-  return titulo.trim() || texto.slice(0, 80)
+  // Capitalizar primera letra
+  if (titulo.length > 0) {
+    titulo = titulo.charAt(0).toUpperCase() + titulo.slice(1)
+  }
+
+  return titulo || texto.slice(0, 80)
 }
 
 // ============================================================

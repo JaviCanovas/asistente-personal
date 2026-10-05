@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { procesarMensajeTelegram, responderConsultaHoy, responderConsultaTareas, ProcesarMensajeResult, TelegramMessage } from '@/lib/telegram/handler'
-import { crearItem, getItemsActivos } from '@/lib/actions/items'
-import { TelegramUpdate } from '@/lib/telegram/handler'
+import {
+  procesarMensajeTelegram,
+  responderConsultaHoy,
+  responderConsultaTareas,
+  TelegramMessage,
+  TelegramUpdate,
+} from '@/lib/telegram/handler'
+import { crearItem, actualizarItem, getItemsActivos } from '@/lib/actions/items'
 import { razonarConGroq } from '@/lib/telegram/groq'
 
 function getAllowedChatIds(): number[] {
   const raw = process.env.TELEGRAM_ALLOWED_CHAT_IDS || ''
-  return raw.split(',')
+  return raw
+    .split(',')
     .map(s => s.trim())
     .filter(s => s.length > 0)
     .map(s => parseInt(s, 10))
@@ -44,8 +50,21 @@ async function enviarRespuestaTelegram(chatId: number, text: string, replyTo?: n
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error(`[enviarRespuestaTelegram] Telegram API error (${response.status}): ${errorText}`)
+      // Reintentar sin parse_mode: 'Markdown' por si caracteres especiales rompieron el parseo
+      const retryResponse = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          reply_to_message_id: replyTo,
+        }),
+      })
+
+      if (!retryResponse.ok) {
+        const errorText = await retryResponse.text()
+        console.error(`[enviarRespuestaTelegram] Error final enviando Telegram (${retryResponse.status}): ${errorText}`)
+      }
     }
   } catch (err) {
     console.error('[enviarRespuestaTelegram] Error de red:', err)
@@ -80,78 +99,79 @@ export async function POST(request: NextRequest) {
 
     const allowedChatIds = getAllowedChatIds()
     const groqApiKey = getGroqApiKey()
+
     console.log(`[Telegram Webhook] Recibido mensaje de chat ${msg.chatId}: "${msg.text}"`)
-    console.log(`[Telegram Webhook] allowedChatIds: ${allowedChatIds.join(',')}`)
-    console.log(`[Telegram Webhook] groqApiKey configurado: ${groqApiKey ? 'si (longitud ' + groqApiKey.length + ')' : 'no'}`)
 
-    const resultado = await procesarMensajeTelegram(msg, allowedChatIds, groqApiKey ? groqApiKey : '')
-
-    // Si es consulta, fetch de datos y responder
-    if (resultado.esConsulta) {
-      const textoLower = msg.text.toLowerCase()
-      let response: { text: string; replyToMessageId?: number } = { text: '', replyToMessageId: msg.messageId }
-
-      const groqKey = getGroqApiKey()
-
-      // Consultas de datos: "qué tengo hoy", "tareas", "eventos"
-      if ((textoLower.includes('qué tengo') || textoLower.includes('tengo hoy') || textoLower.includes('qué hay') || textoLower.includes('qué está') || textoLower.includes('mi día') || textoLower.includes('calendario') || textoLower.includes('estado') || textoLower.includes('progreso') || textoLower.includes('inbox') || textoLower.includes('sin procesar')) && !textoLower.includes('cómo') && !textoLower.includes('hola') && !textoLower.includes('qué tal') && !textoLower.includes('saludos')) {
-        // Es una consulta de datos real
-        if (textoLower.includes('hoy') || textoLower.includes('qué tengo') || textoLower.includes('mi día')) {
-          const r = await responderConsultaHoy(msg)
-          response = { text: r.text, replyToMessageId: r.replyToMessageId }
-        } else if (textoLower.includes('tarea') || textoLower.includes('tareas')) {
-          const r = await responderConsultaTareas(msg)
-          response = { text: r.text, replyToMessageId: r.replyToMessageId }
-        } else {
-          response = { text: 'No estoy seguro de qué quieres consultar exactamente. Escribe /ayuda para ver las opciones.', replyToMessageId: msg.messageId }
-        }
-      } else if (groqKey) {
-        // Consulta conversacional o compleja — Groq con contexto de datos
-        const items = await getItemsActivos()
-        const activos = items.filter(i => i.estado === 'activo' || i.estado === 'sin_procesar')
-
-        const contexto = activos.length > 0
-          ? `El usuario tiene ${activos.length} items activos. He aquí un resumen: ${activos.slice(0, 10).map(i => '- ' + i.titulo + ' (' + i.tipo + ', ' + i.prioridad + (i.fecha_limite ? ', vence ' + i.fecha_limite : '') + ')').join(' | ')}`
-          : 'El usuario no tiene items activos.'
-
-        const decision = await razonarConGroq(msg.text, groqKey, contexto)
-
-        if (decision.accion === 'responder' && decision.respuesta) {
-          response = { text: decision.respuesta, replyToMessageId: msg.messageId }
-        } else if (decision.accion === 'crear' && decision.titulo) {
-          // Groq decidió que en realidad es crear algo, no consultar
-          const itemCreado = await crearItem({
-            titulo: decision.titulo,
-            tipo: decision.tipo || 'tarea',
-            prioridad: decision.prioridad || 'media',
-            fecha_limite: decision.fecha_limite,
-          })
-          response = {
-            text: 'Guardado: "' + decision.titulo + '"\n' + (decision.tipo || 'tarea') + ' · ' + (decision.prioridad || 'media') + ' prioridad',
-            replyToMessageId: msg.messageId,
-          }
-          console.log('[Telegram] Groq decidió crear item: "' + decision.titulo + '"')
-        } else if (decision.pregunta) {
-          response = { text: decision.pregunta, replyToMessageId: msg.messageId }
-        } else {
-          response = { text: 'No estoy seguro de qué quieres consultar. Escribe /ayuda para ver las opciones.', replyToMessageId: msg.messageId }
-        }
-      } else {
-        response = { text: 'No estoy seguro de qué quieres consultar. Escribe /ayuda para ver las opciones.', replyToMessageId: msg.messageId }
+    // Obtener los ítems más recientes para darle memoria y contexto a Groq
+    let contextoReciente = ''
+    let ultimoItem: any = null
+    try {
+      const items = await getItemsActivos()
+      const recientes = items.slice(0, 4)
+      if (recientes.length > 0) {
+        ultimoItem = recientes[0]
+        contextoReciente = recientes
+          .map(
+            it =>
+              `- [ID: ${it.id}] "${it.titulo}" (${it.tipo}${
+                it.fecha_evento ? ', fecha_evento: ' + it.fecha_evento.slice(0, 10) : ''
+              }${it.fecha_limite ? ', fecha_limite: ' + it.fecha_limite.slice(0, 10) : ''}${
+                it.hora_inicio ? ', hora: ' + it.hora_inicio : ''
+              })`
+          )
+          .join('\n')
       }
-
-      await enviarRespuestaTelegram(msg.chatId, response.text, response.replyToMessageId)
-      return NextResponse.json({ ok: true, update_processed: true, action: 'consulta' })
+    } catch (e) {
+      console.warn('[Telegram Webhook] No se pudo obtener items para contexto:', e)
     }
 
-    // Confirmación pendiente
-    if (resultado.necesitaConfirmacion) {
-      await enviarRespuestaTelegram(msg.chatId, resultado.respuesta, msg.messageId)
-      console.log(`[Telegram] Usuario ${msg.chatId} esperando confirmación`)
-      return NextResponse.json({ ok: true, update_processed: true, action: 'confirmacion_pendiente' })
+    const resultado = await procesarMensajeTelegram(
+      msg,
+      allowedChatIds,
+      groqApiKey ? groqApiKey : '',
+      contextoReciente
+    )
+
+    // 1. Modificar ítem existente (correcciones como "Tiene que ser jueves", "Cámbialo a las 20:00")
+    if (resultado.modificarItem) {
+      try {
+        const targetId = resultado.modificarItem.itemId || (ultimoItem ? ultimoItem.id : null)
+        if (targetId) {
+          const updates: any = {}
+          if (resultado.modificarItem.nuevaFecha) {
+            if (resultado.modificarItem.nuevoTipo === 'evento' || ultimoItem?.tipo === 'evento') {
+              updates.fecha_evento = resultado.modificarItem.nuevaFecha
+              updates.fecha_limite = null
+            } else {
+              updates.fecha_limite = resultado.modificarItem.nuevaFecha
+            }
+          }
+          if (resultado.modificarItem.nuevaHora) {
+            updates.hora_inicio = resultado.modificarItem.nuevaHora
+          }
+          if (resultado.modificarItem.nuevoTitulo) {
+            updates.titulo = resultado.modificarItem.nuevoTitulo
+          }
+          if (resultado.modificarItem.nuevoTipo) {
+            updates.tipo = resultado.modificarItem.nuevoTipo
+          }
+
+          await actualizarItem(targetId, updates)
+          await enviarRespuestaTelegram(msg.chatId, resultado.respuesta, msg.messageId)
+          console.log(`[Telegram] Item modificado: ${targetId}`, updates)
+          return NextResponse.json({ ok: true, update_processed: true, action: 'item_modificado', item_id: targetId })
+        } else {
+          await enviarRespuestaTelegram(msg.chatId, '⚠️ No encontré el ítem previo para modificar. Por favor, indícame el nombre.', msg.messageId)
+          return NextResponse.json({ ok: true, update_processed: true })
+        }
+      } catch (err: any) {
+        console.error('[Telegram] Error al modificar ítem:', err.message)
+        await enviarRespuestaTelegram(msg.chatId, `❌ Error al actualizar: ${err.message}`, msg.messageId)
+        return NextResponse.json({ ok: false, error: err.message }, { status: 500 })
+      }
     }
 
-    // Crear item
+    // 2. Crear ítem (evento, tarea, nota, recordatorio)
     if (resultado.crearItem) {
       try {
         const itemCreado = await crearItem({
@@ -160,12 +180,15 @@ export async function POST(request: NextRequest) {
           descripcion: resultado.crearItem.descripcion,
           prioridad: resultado.crearItem.prioridad,
           fecha_limite: resultado.crearItem.fecha_limite,
+          fecha_evento: resultado.crearItem.fecha_evento,
+          hora_inicio: resultado.crearItem.hora_inicio,
           proyecto_id: resultado.crearItem.proyecto_id,
           etiquetas: resultado.crearItem.etiquetas,
+          origen: 'telegram',
         })
 
         await enviarRespuestaTelegram(msg.chatId, resultado.respuesta, msg.messageId)
-        console.log(`[Telegram] Item creado: "${itemCreado.titulo}" (${itemCreado.id})`)
+        console.log(`[Telegram] Item creado: "${itemCreado.titulo}" (${itemCreado.id}) - tipo: ${itemCreado.tipo}`)
         return NextResponse.json({ ok: true, update_processed: true, action: 'item_creado', item_id: itemCreado.id })
       } catch (err: any) {
         console.error('[Telegram] Error al crear item:', err.message)
@@ -174,7 +197,34 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Respuesta genérica
+    // 3. Consultas
+    if (resultado.esConsulta) {
+      const textoLower = msg.text.toLowerCase()
+      let response: { text: string; replyToMessageId?: number } = { text: '', replyToMessageId: msg.messageId }
+
+      if (textoLower.includes('hoy') || textoLower.includes('qué tengo') || textoLower.includes('mi día')) {
+        const r = await responderConsultaHoy(msg)
+        response = { text: r.text, replyToMessageId: r.replyToMessageId }
+      } else if (textoLower.includes('tarea') || textoLower.includes('tareas')) {
+        const r = await responderConsultaTareas(msg)
+        response = { text: r.text, replyToMessageId: r.replyToMessageId }
+      } else if (resultado.respuesta && resultado.respuesta !== 'CONSULTA') {
+        response = { text: resultado.respuesta, replyToMessageId: msg.messageId }
+      } else {
+        response = { text: '¿Qué te gustaría consultar? Puedes pedirme ver tu día con /hoy o tus tareas con /tareas.', replyToMessageId: msg.messageId }
+      }
+
+      await enviarRespuestaTelegram(msg.chatId, response.text, response.replyToMessageId)
+      return NextResponse.json({ ok: true, update_processed: true, action: 'consulta' })
+    }
+
+    // 4. Confirmación pendiente
+    if (resultado.necesitaConfirmacion) {
+      await enviarRespuestaTelegram(msg.chatId, resultado.respuesta, msg.messageId)
+      return NextResponse.json({ ok: true, update_processed: true, action: 'confirmacion_pendiente' })
+    }
+
+    // 5. Respuesta conversacional genérica
     if (resultado.respuesta) {
       await enviarRespuestaTelegram(msg.chatId, resultado.respuesta, msg.messageId)
     }
@@ -182,7 +232,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, update_processed: true })
   } catch (err: any) {
     console.error('[Telegram Webhook Error]', err)
-    console.error('[Telegram Webhook Error] Stack:', err.stack)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
   }
 }

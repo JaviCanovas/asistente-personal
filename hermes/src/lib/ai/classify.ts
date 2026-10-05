@@ -23,6 +23,8 @@ const KEYWORDS_TIPO: Record<ItemTipo, string[]> = {
     'charla', 'presentación', 'cumpleaños', 'aniversario', 'partido',
     'concierto', 'viaje', 'vuelo', 'tren', 'cena', 'almuerzo', 'café',
     'quedada', 'visita', 'clase', 'curso', 'taller', 'webinar',
+    'cine', 'película', 'médico', 'dentista', 'pádel', 'padel', 'fútbol', 'futbol',
+    'copas', 'cañas', 'salida', 'comida',
   ],
   idea: [
     'idea', 'pensar', 'quizás', 'podría', 'sería interesante', 'qué tal si',
@@ -162,6 +164,19 @@ const PATRONES_EXPLICITOS: PatronExplicito[] = [
 ]
 
 function detectarTipoExplicito(texto: string): { tipo: ItemTipo; confianza: number; razon: string } | null {
+  const textoLower = texto.toLowerCase()
+  const esRecordatorioCmd = /^(?:recuérda(?:me)?|recordar(?:me)?)\s+/i.test(texto)
+  if (esRecordatorioCmd) {
+    const tieneEvento = KEYWORDS_TIPO.evento.some(kw => textoLower.includes(kw))
+    if (tieneEvento) {
+      return {
+        tipo: 'evento',
+        confianza: 0.9,
+        razon: 'evento detectado en recordatorio',
+      }
+    }
+  }
+
   let mejorMatch: { tipo: ItemTipo; confianza: number; razon: string; index: number } | null = null
 
   for (const patron of PATRONES_EXPLICITOS) {
