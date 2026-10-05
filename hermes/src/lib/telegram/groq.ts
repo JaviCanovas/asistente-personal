@@ -7,7 +7,8 @@ export interface GroqDecision {
   prioridad?: ItemPrioridad
   fecha_limite?: string  // YYYY-MM-DD
   fecha_evento?: string  // YYYY-MM-DD
-  hora_inicio?: string   // HH:mm
+  hora_inicio?: string   // HH:mm (o undefined, NUNCA cadena vacía)
+  en_mi_dia?: boolean
   item_id_a_modificar?: string
   nueva_fecha?: string   // YYYY-MM-DD
   nueva_hora?: string    // HH:mm
@@ -200,6 +201,23 @@ export async function razonarConGroq(
         decision.accion = 'responder'
         decision.respuesta = content
         decision.razon = 'Decisión por defecto'
+      }
+
+      // Eliminar campos con cadenas vacías para evitar errores de tipo en PostgreSQL (ej: TIME "")
+      if (typeof decision.hora_inicio === 'string' && decision.hora_inicio.trim() === '') {
+        delete decision.hora_inicio
+      }
+      if (typeof decision.fecha_limite === 'string' && decision.fecha_limite.trim() === '') {
+        delete decision.fecha_limite
+      }
+      if (typeof decision.fecha_evento === 'string' && decision.fecha_evento.trim() === '') {
+        delete decision.fecha_evento
+      }
+      if (typeof decision.nueva_hora === 'string' && decision.nueva_hora.trim() === '') {
+        delete decision.nueva_hora
+      }
+      if (typeof decision.nueva_fecha === 'string' && decision.nueva_fecha.trim() === '') {
+        delete decision.nueva_fecha
       }
 
       return decision

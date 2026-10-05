@@ -40,6 +40,7 @@ export interface ProcesarMensajeResult {
     fecha_limite?: string
     fecha_evento?: string
     hora_inicio?: string
+    en_mi_dia?: boolean
     proyecto_id?: string
     etiquetas?: string[]
     razon: string
@@ -259,14 +260,17 @@ function convertirDecisionAGroqResultado(
       const tipo = decision.tipo || 'tarea'
       const titulo = decision.titulo || extractTitulo(textoOriginal)
       const prioridad = decision.prioridad || 'media'
-      const fecha_evento = decision.fecha_evento || (tipo === 'evento' ? decision.fecha_limite : undefined)
-      const fecha_limite = decision.fecha_limite || (tipo !== 'evento' ? decision.fecha_evento : undefined)
+      const fecha_evento = (decision.fecha_evento && decision.fecha_evento.trim() !== '') ? decision.fecha_evento.trim() : (tipo === 'evento' ? decision.fecha_limite : undefined)
+      const fecha_limite = (decision.fecha_limite && decision.fecha_limite.trim() !== '') ? decision.fecha_limite.trim() : (tipo !== 'evento' ? decision.fecha_evento : undefined)
+      const hora_inicio = (decision.hora_inicio && typeof decision.hora_inicio === 'string' && decision.hora_inicio.trim() !== '') ? decision.hora_inicio.trim() : undefined
+      const en_mi_dia = decision.en_mi_dia || /mi\s+d[ií]a/i.test(textoOriginal)
 
       let respuesta = decision.respuesta
       if (!respuesta) {
         const fechaLabel = fecha_evento || fecha_limite
-        const horaLabel = decision.hora_inicio ? ` · ${decision.hora_inicio}` : ''
-        respuesta = `✅ ${tipo.charAt(0).toUpperCase() + tipo.slice(1)} anotado: "${titulo}"${fechaLabel ? ' · ' + fechaLabel : ''}${horaLabel}`
+        const horaLabel = hora_inicio ? ` · ${hora_inicio}` : ''
+        const miDiaTag = en_mi_dia ? ' a ☀️ Mi Día' : ''
+        respuesta = `✅ ${tipo.charAt(0).toUpperCase() + tipo.slice(1)} añadido${miDiaTag}: "${titulo}"${fechaLabel ? ' · ' + fechaLabel : ''}${horaLabel}`
       }
 
       return {
@@ -276,7 +280,8 @@ function convertirDecisionAGroqResultado(
           prioridad,
           fecha_evento,
           fecha_limite,
-          hora_inicio: decision.hora_inicio,
+          hora_inicio,
+          en_mi_dia,
           razon: decision.razon || 'Procesado con IA de Hermes',
         },
         respuesta,
@@ -343,6 +348,11 @@ export function extractTitulo(texto: string, clasificacion?: ClasificacionSugeri
   for (const p of prefijos) {
     titulo = titulo.replace(p, '').trim()
   }
+
+  // Quitar si empieza por "apunta en mi día de hoy que tengo que..." o similar
+  titulo = titulo.replace(/^(?:apunta(?:r)?|anota(?:r)?|pon(?:er|me)?|añad(?:e|ir))(?:\s+en|\s+a)?\s+(?:mi\s+d[ií]a(?:\s+de\s+hoy)?)\s+(?:que\s+)?(?:tengo\s+que|hay\s+que)?\s*/i, '').trim()
+  titulo = titulo.replace(/^(?:en\s+mi\s+d[ií]a(?:\s+de\s+hoy)?)\s+(?:que\s+)?(?:tengo\s+que|hay\s+que)?\s*/i, '').trim()
+  titulo = titulo.replace(/^(?:que\s+)?(?:tengo\s+que|hay\s+que|debo|necesito)\s+/i, '').trim()
 
   // Quitar expresiones temporales iniciales que preceden al evento real
   // Ej: "el viernes por la noche tengo cena con los pibes" -> "cena con los pibes"

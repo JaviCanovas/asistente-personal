@@ -109,6 +109,8 @@ export async function crearItem(data: {
   hora_fin?: string
   proyecto_id?: string
   etiquetas?: string[]
+  metadata?: Record<string, unknown>
+  en_mi_dia?: boolean
   origen?: string
 }) {
   if (!isSupabaseConfigured()) {
@@ -118,15 +120,30 @@ export async function crearItem(data: {
   const supabase = await createClient()
   
   const tipo = data.tipo ?? 'tarea'
-  let fecha_limite = data.fecha_limite
-  let fecha_evento = data.fecha_evento
+  let fecha_limite: string | null = (data.fecha_limite && typeof data.fecha_limite === 'string' && data.fecha_limite.trim() !== '') ? data.fecha_limite.trim() : null
+  let fecha_evento: string | null = (data.fecha_evento && typeof data.fecha_evento === 'string' && data.fecha_evento.trim() !== '') ? data.fecha_evento.trim() : null
 
   if (tipo === 'evento') {
     fecha_evento = fecha_evento || fecha_limite
-    fecha_limite = undefined
+    fecha_limite = null
   } else {
     fecha_limite = fecha_limite || fecha_evento
-    fecha_evento = undefined
+    fecha_evento = null
+  }
+
+  // Sanitizar horas para evitar syntax error en Postgres TIME type si viene cadena vacía
+  const hora_inicio = (data.hora_inicio && typeof data.hora_inicio === 'string' && data.hora_inicio.trim() !== '') ? data.hora_inicio.trim() : null
+  const hora_fin = (data.hora_fin && typeof data.hora_fin === 'string' && data.hora_fin.trim() !== '') ? data.hora_fin.trim() : null
+
+  const hoyStr = new Date().toISOString().slice(0, 10)
+  const metadata: Record<string, unknown> = {
+    ...(data.metadata || {}),
+  }
+  if (data.en_mi_dia) {
+    metadata.mi_dia_fecha = hoyStr
+    if (!fecha_limite && tipo !== 'evento') {
+      fecha_limite = hoyStr
+    }
   }
 
   // Insertar primero en Supabase
@@ -140,10 +157,11 @@ export async function crearItem(data: {
       prioridad:    data.prioridad ?? 'media',
       fecha_limite,
       fecha_evento,
-      hora_inicio:  data.hora_inicio,
-      hora_fin:     data.hora_fin,
+      hora_inicio,
+      hora_fin,
       proyecto_id:  data.proyecto_id,
       etiquetas:    data.etiquetas ?? [],
+      metadata,
       origen:       data.origen ?? 'web',
     })
     .select()
@@ -272,10 +290,17 @@ export async function actualizarItem(id: string, data: Partial<Item>) {
     }
   }
 
-  const cleanData = {
+  const cleanData: any = {
     ...data,
     fecha_limite,
     fecha_evento
+  }
+
+  if ('hora_inicio' in data) {
+    cleanData.hora_inicio = (data.hora_inicio && typeof data.hora_inicio === 'string' && data.hora_inicio.trim() !== '') ? data.hora_inicio.trim() : null
+  }
+  if ('hora_fin' in data) {
+    cleanData.hora_fin = (data.hora_fin && typeof data.hora_fin === 'string' && data.hora_fin.trim() !== '') ? data.hora_fin.trim() : null
   }
 
   const { data: item, error } = await supabase

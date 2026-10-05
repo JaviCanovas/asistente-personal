@@ -184,6 +184,7 @@ export async function POST(request: NextRequest) {
           hora_inicio: resultado.crearItem.hora_inicio,
           proyecto_id: resultado.crearItem.proyecto_id,
           etiquetas: resultado.crearItem.etiquetas,
+          en_mi_dia: resultado.crearItem.en_mi_dia,
           origen: 'telegram',
         })
 
