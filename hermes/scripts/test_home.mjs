@@ -29,7 +29,7 @@ async function testHome() {
         hasBodyHScroll: document.body.scrollWidth > window.innerWidth,
       };
     });
-    console.log(`Viewport ${width}px:`, JSON.stringify(styles, null, 2));
+
     await page.screenshot({ path: `scripts/after_home_${width}.png` });
     await page.close();
   }

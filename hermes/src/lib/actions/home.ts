@@ -2,12 +2,13 @@
 
 import { getItemsActivos } from '@/lib/actions/items'
 import { getPlantillasGym, getRutinasGym } from '@/lib/actions/health'
-import { priorizarItemsDeHoy } from '@/lib/ai/prioritize'
-import { isGoogleConnected, obtenerEventosGoogleHoy } from '@/lib/googleCalendar'
+import { priorizarItemsDeHoy, obtenerProximosEventos } from '@/lib/ai/prioritize'
+import { isGoogleConnected, obtenerEventosGoogleProximos } from '@/lib/googleCalendar'
 import type { Item, ItemPriorizado, PlantillaGym, RutinaGym } from '@/lib/types'
 
 export interface HomeData {
   priorizados: ItemPriorizado[]
+  proximosEventos: Item[]
   plantillas: PlantillaGym[]
   rutinas: RutinaGym[]
 }
@@ -23,8 +24,8 @@ export async function getHomeData(): Promise<HomeData> {
   let googleEventos: Item[] = []
   if (googleConnected) {
     try {
-      // Optimización crítica: sólo eventos de HOY, con caché en memoria
-      googleEventos = await obtenerEventosGoogleHoy()
+      // Eventos de Google Calendar desde el inicio de hoy hasta 90 días próximos (con caché)
+      googleEventos = await obtenerEventosGoogleProximos(90)
     } catch (e) {
       console.error('[getHomeData] Error al obtener eventos de Google:', e)
     }
@@ -40,9 +41,11 @@ export async function getHomeData(): Promise<HomeData> {
 
   const todosItems = [...items, ...filteredGoogleEventos]
   const priorizados = priorizarItemsDeHoy(todosItems)
+  const proximosEventos = obtenerProximosEventos(todosItems)
 
   return {
     priorizados,
+    proximosEventos,
     plantillas,
     rutinas,
   }

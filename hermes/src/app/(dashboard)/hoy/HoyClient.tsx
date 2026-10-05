@@ -47,16 +47,26 @@ export default function HoyClient({ priorizados, analisisCarga }: HoyClientProps
         </div>
       ) : (
         <div className="space-y-2 item-list">
-          {priorizados.map(({ item, razon }, i) => (
-            <div key={item.id}>
-              {/* Separador de prioridad */}
-              {i === 0 && <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>PRIORITARIO</p>}
-              {i === 3 && priorizados.length > 3 && (
-                <p className="text-xs font-medium mt-4 mb-2" style={{ color: 'var(--text-muted)' }}>RESTO DEL DÍA</p>
-              )}
-              <ItemCard item={item} razon={razon} />
-            </div>
-          ))}
+          {priorizados.map(({ item, razon, esMiDia }, i) => {
+            const primerNoMiDia = priorizados.some(p => p.esMiDia) && !esMiDia && (i > 0 && priorizados[i - 1]?.esMiDia)
+            return (
+              <div key={item.id}>
+                {/* Separador de prioridad */}
+                {i === 0 && (
+                  <p className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: esMiDia ? '#f59e0b' : 'var(--text-muted)' }}>
+                    {esMiDia ? '☀️ MI DÍA' : 'PRIORITARIO'}
+                  </p>
+                )}
+                {primerNoMiDia && (
+                  <p className="text-xs font-medium mt-4 mb-2" style={{ color: 'var(--text-muted)' }}>RESTO DE PRIORIDADES</p>
+                )}
+                {!priorizados.some(p => p.esMiDia) && i === 3 && priorizados.length > 3 && (
+                  <p className="text-xs font-medium mt-4 mb-2" style={{ color: 'var(--text-muted)' }}>RESTO DEL DÍA</p>
+                )}
+                <ItemCard item={item} razon={razon} />
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

@@ -309,6 +309,14 @@ export async function obtenerEventosGoogleHoy(): Promise<Item[]> {
   return obtenerEventosGoogle({ timeMin, timeMax })
 }
 
+// 4.c Obtener eventos de Google Calendar desde el inicio de hoy hasta N días próximos
+export async function obtenerEventosGoogleProximos(dias: number = 90): Promise<Item[]> {
+  const now = new Date()
+  const timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString()
+  const timeMax = new Date(now.getTime() + dias * 24 * 60 * 60 * 1000).toISOString()
+  return obtenerEventosGoogle({ timeMin, timeMax })
+}
+
 // 5. Sincronizar todos los items pendientes
 export async function sincronizarPendientesGoogle(): Promise<void> {
   const auth = await getAuthenticatedAuthClient()

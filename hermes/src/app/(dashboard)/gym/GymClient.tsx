@@ -32,6 +32,92 @@ const GymProgressionChart = dynamic(() => import('./GymProgressionChart'), {
 })
 
 const STORAGE_KEY = 'hermes_active_workout'
+const STORAGE_KEY_REST_TIMER = 'hermes_active_rest_timer'
+
+// Reproducir chime acústico sintetizado (Web Audio API) al terminar el descanso
+function reproducirChimeFinDescanso() {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    if (ctx.state === 'suspended') {
+      ctx.resume()
+    }
+    const now = ctx.currentTime
+    // Tres pitidos agradables: dos de 880Hz y uno de 1320Hz
+    const tiempos = [0, 0.18, 0.36]
+    tiempos.forEach((t, i) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(i === 2 ? 1320 : 880, now + t)
+      gain.gain.setValueAtTime(0.3, now + t)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + t + (i === 2 ? 0.3 : 0.14))
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + t)
+      osc.stop(now + t + (i === 2 ? 0.3 : 0.14))
+    })
+  } catch (e) {
+    console.warn('AudioContext no disponible o bloqueado:', e)
+  }
+}
+
+// Desbloquear audio en gesto del usuario
+function desbloquearAudio() {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    if (ctx.state === 'suspended') {
+      ctx.resume()
+    }
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    gain.gain.value = 0.0001
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(0)
+    osc.stop(0.001)
+  } catch {}
+}
+
+// Disparar alertas multicanal: audio, vibración háptica y notificación nativa
+function dispararNotificacionFinDescanso(ejercicio: string) {
+  reproducirChimeFinDescanso()
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate([200, 100, 200, 100, 400])
+    } catch {}
+  }
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    try {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.ready.then(reg => {
+          reg.showNotification('⏱️ ¡Descanso completado!', {
+            body: `Tiempo de descanso cumplido para ${ejercicio}. ¡A por la siguiente serie!`,
+            icon: '/icon-192.png',
+            badge: '/favicon-32.png',
+            tag: 'gym-rest-timer',
+            renotify: true
+          } as any)
+        }).catch(() => {
+          new Notification('⏱️ ¡Descanso completado!', {
+            body: `Tiempo de descanso cumplido para ${ejercicio}. ¡A por la siguiente serie!`,
+            icon: '/icon-192.png'
+          })
+        })
+      } else {
+        new Notification('⏱️ ¡Descanso completado!', {
+          body: `Tiempo de descanso cumplido para ${ejercicio}. ¡A por la siguiente serie!`,
+          icon: '/icon-192.png'
+        })
+      }
+    } catch (e) {
+      console.warn('Error mostrando notificación:', e)
+    }
+  }
+}
 
 function toSentenceCase(str: string): string {
   if (!str) return ''
@@ -61,8 +147,19 @@ interface EjercicioActivo {
   nombre: string
   completado: boolean
   descanso?: string
+  repeticionesGuia?: string
+  pesoSugerido?: number
   notasGuia?: string
   series: SerieSesion[]
+}
+
+export interface TimerRestState {
+  activo: boolean
+  targetEndTime: number
+  duracionTotal: number
+  segundosRestantes: number
+  ejercicio: string
+  completado?: boolean
 }
 
 interface SesionActivaData {
@@ -108,22 +205,70 @@ export default function GymClient({
   const [sesionActiva, setSesionActiva] = useState<SesionActivaData | null>(null)
   const [sesionRecuperable, setSesionRecuperable] = useState<SesionActivaData | null>(null)
   const [estadoAutoGuardado, setEstadoAutoGuardado] = useState<'guardado' | 'guardando'>('guardado')
-  const [timerRest, setTimerRest] = useState<{ activo: boolean; segundosRestantes: number; ejercicio: string } | null>(null)
+  const [timerRest, setTimerRest] = useState<TimerRestState | null>(null)
+  const originalTitleRef = useRef<string>('')
 
-  // Recuperar sesión pendiente de localStorage al montar
+  // Preservar título original de la pestaña
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      originalTitleRef.current = document.title
+    }
+  }, [])
+
+  // Recuperar sesión pendiente de localStorage al montar enriqueciendo con plantilla
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
         const parsed = JSON.parse(saved) as SesionActivaData
         if (parsed && parsed.ejercicios && parsed.ejercicios.length > 0) {
+          parsed.ejercicios = parsed.ejercicios.map(ej => {
+            if (ej.repeticionesGuia && ej.pesoSugerido !== undefined) return ej
+            const ejTemplate = plantillas.flatMap(p => p.ejercicios).find(
+              e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase()
+            )
+            return {
+              ...ej,
+              repeticionesGuia: ej.repeticionesGuia || ejTemplate?.repeticiones,
+              pesoSugerido: ej.pesoSugerido ?? ejTemplate?.peso_kg,
+              notasGuia: ej.notasGuia || ejTemplate?.notas
+            }
+          })
           setSesionRecuperable(parsed)
         }
       }
     } catch (e) {
       console.error('Error recuperando sesión local:', e)
     }
-  }, [])
+  }, [plantillas])
+
+  // Recuperar timer de descanso persistente en localStorage al montar o recargar
+  useEffect(() => {
+    try {
+      const savedTimer = localStorage.getItem(STORAGE_KEY_REST_TIMER)
+      if (savedTimer) {
+        const parsed = JSON.parse(savedTimer) as TimerRestState
+        if (parsed && parsed.targetEndTime) {
+          const restantes = Math.round((parsed.targetEndTime - Date.now()) / 1000)
+          if (restantes > 0) {
+            setTimerRest({
+              ...parsed,
+              activo: true,
+              segundosRestantes: restantes,
+              completado: false
+            })
+          } else {
+            if (restantes > -180) {
+              showToast({ message: `⏱️ Descanso completado para ${parsed.ejercicio}`, type: 'info' })
+            }
+            localStorage.removeItem(STORAGE_KEY_REST_TIMER)
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error restaurando temporizador persistente:', e)
+    }
+  }, [showToast])
 
   // Auto-guardado en localStorage cada vez que cambia sesionActiva
   useEffect(() => {
@@ -164,21 +309,150 @@ export default function GymClient({
     return () => window.removeEventListener('online', handleSync)
   }, [showToast, router])
 
-  // Timer de descanso
+  // Timer de descanso resiliente al cambio de app / bloqueo de pantalla
   useEffect(() => {
-    if (!timerRest || !timerRest.activo) return
-    if (timerRest.segundosRestantes <= 0) {
-      setTimerRest(null)
+    if (!timerRest || !timerRest.activo) {
+      if (typeof document !== 'undefined' && originalTitleRef.current) {
+        document.title = originalTitleRef.current
+      }
       return
     }
-    const interval = setInterval(() => {
-      setTimerRest(prev => {
-        if (!prev || prev.segundosRestantes <= 1) return null
-        return { ...prev, segundosRestantes: prev.segundosRestantes - 1 }
+
+    if (timerRest.completado) return
+
+    const tick = () => {
+      setTimerRest(actual => {
+        if (!actual || !actual.activo || actual.completado) return actual
+        // Cálculo basado en timestamp absoluto real del reloj
+        const remaining = Math.round((actual.targetEndTime - Date.now()) / 1000)
+        if (remaining <= 0) {
+          dispararNotificacionFinDescanso(actual.ejercicio)
+          try {
+            localStorage.removeItem(STORAGE_KEY_REST_TIMER)
+          } catch {}
+          if (typeof document !== 'undefined') {
+            document.title = `🔔 ¡Tiempo! ${actual.ejercicio} | Hermes`
+          }
+          showToast({
+            message: `⏱️ ¡Descanso terminado para ${actual.ejercicio}! Toca siguiente serie.`,
+            type: 'success'
+          })
+          return { ...actual, segundosRestantes: 0, completado: true }
+        }
+        const mins = Math.floor(remaining / 60)
+        const secs = String(remaining % 60).padStart(2, '0')
+        if (typeof document !== 'undefined') {
+          document.title = `⏱️ ${mins}:${secs} - ${actual.ejercicio} | Hermes`
+        }
+        return { ...actual, segundosRestantes: remaining }
       })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [timerRest])
+    }
+
+    tick()
+    const interval = setInterval(tick, 1000)
+
+    // Re-sincronización instantánea cuando la app vuelve a primer plano (focus, visibilitychange, pageshow)
+    const handleSyncOnResume = () => {
+      if (typeof document !== 'undefined' && (document.visibilityState === 'visible' || document.hasFocus())) {
+        tick()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleSyncOnResume)
+    window.addEventListener('focus', handleSyncOnResume)
+    window.addEventListener('pageshow', handleSyncOnResume)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleSyncOnResume)
+      window.removeEventListener('focus', handleSyncOnResume)
+      window.removeEventListener('pageshow', handleSyncOnResume)
+    }
+  }, [timerRest?.targetEndTime, timerRest?.activo, timerRest?.completado, showToast])
+
+  // Desvanecer notificación de descanso cumplido tras 5 segundos
+  useEffect(() => {
+    if (timerRest && timerRest.completado) {
+      const timeout = setTimeout(() => {
+        detenerTimerDescanso()
+      }, 5000)
+      return () => clearTimeout(timeout)
+    }
+  }, [timerRest?.completado])
+
+  // Iniciar timer de descanso
+  function iniciarTimerDescanso(duracionSegundos: number, nombreEjercicio: string) {
+    desbloquearAudio()
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      try {
+        Notification.requestPermission()
+      } catch {}
+    }
+
+    const targetEndTime = Date.now() + duracionSegundos * 1000
+    const nuevoTimer: TimerRestState = {
+      activo: true,
+      targetEndTime,
+      duracionTotal: duracionSegundos,
+      segundosRestantes: duracionSegundos,
+      ejercicio: nombreEjercicio,
+      completado: false
+    }
+
+    setTimerRest(nuevoTimer)
+    try {
+      localStorage.setItem(STORAGE_KEY_REST_TIMER, JSON.stringify(nuevoTimer))
+    } catch {}
+
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'START_REST_TIMER',
+        targetEndTime,
+        ejercicio: nombreEjercicio
+      })
+    }
+  }
+
+  // Detener y limpiar timer de descanso
+  function detenerTimerDescanso() {
+    setTimerRest(null)
+    try {
+      localStorage.removeItem(STORAGE_KEY_REST_TIMER)
+    } catch {}
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'CANCEL_REST_TIMER' })
+    }
+    if (typeof document !== 'undefined' && originalTitleRef.current) {
+      document.title = originalTitleRef.current
+    }
+  }
+
+  // Ajustar tiempo (+30s / -15s)
+  function ajustarTiempoTimer(segundosDelta: number) {
+    setTimerRest(prev => {
+      if (!prev || !prev.activo) return null
+      const nuevoEnd = Math.max(Date.now() + 3000, prev.targetEndTime + segundosDelta * 1000)
+      const restantes = Math.max(0, Math.round((nuevoEnd - Date.now()) / 1000))
+      const updated: TimerRestState = {
+        ...prev,
+        targetEndTime: nuevoEnd,
+        duracionTotal: Math.max(5, prev.duracionTotal + segundosDelta),
+        segundosRestantes: restantes,
+        completado: false
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY_REST_TIMER, JSON.stringify(updated))
+      } catch {}
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'START_REST_TIMER',
+          targetEndTime: nuevoEnd,
+          ejercicio: prev.ejercicio
+        })
+      }
+      return updated
+    })
+  }
 
   // Iniciar entrenamiento automáticamente si viene en el query param 'iniciar'
   const searchParams = useSearchParams()
@@ -288,6 +562,8 @@ export default function GymClient({
         nombre: ej.nombre,
         completado: true,
         descanso: ej.descanso,
+        repeticionesGuia: ej.repeticiones,
+        pesoSugerido: ej.peso_kg,
         notasGuia: ej.notas,
         series: seriesGeneradas
       }
@@ -329,10 +605,10 @@ export default function GymClient({
       const ejCopy = { ...copy.ejercicios[ejIdx], series: [...copy.ejercicios[ejIdx].series] }
       ejCopy.series[serieIdx] = { ...ejCopy.series[serieIdx], [campo]: valor }
 
-      // Si se marca como completada, disparar el timer de descanso
-      if (campo === 'completada' && valor === true && ejCopy.descanso) {
+      // Si se marca como completada, disparar el timer de descanso resiliente a segundo plano
+      if (campo === 'completada' && valor === true) {
         const segs = parseDescansoSegundos(ejCopy.descanso)
-        setTimerRest({ activo: true, segundosRestantes: segs, ejercicio: ejCopy.nombre })
+        iniciarTimerDescanso(segs, ejCopy.nombre)
       }
 
       copy.ejercicios[ejIdx] = ejCopy
@@ -420,6 +696,7 @@ export default function GymClient({
       completado: ej.completado,
       descanso: ej.descanso,
       notasGuia: ej.notasGuia,
+      repeticionesGuia: ej.repeticionesGuia,
       series: ej.series.map(s => ({
         numero_serie: s.numero_serie,
         peso_kg: typeof s.peso_kg === 'number' && !isNaN(s.peso_kg) ? Math.max(0, s.peso_kg) : 0,
@@ -464,7 +741,7 @@ export default function GymClient({
         setRutinas(prev => [...registrosOptimistas, ...prev])
         localStorage.removeItem(STORAGE_KEY)
         setSesionActiva(null)
-        setTimerRest(null)
+        detenerTimerDescanso()
         showToast({
           message: 'Sin cobertura en el gym: Guardado en tu móvil. Se sincronizará automáticamente al volver Internet.',
           type: 'info',
@@ -480,7 +757,7 @@ export default function GymClient({
         setRutinas(prev => [...registrosOptimistas, ...prev])
         localStorage.removeItem(STORAGE_KEY)
         setSesionActiva(null)
-        setTimerRest(null)
+        detenerTimerDescanso()
         showToast({
           message: '¡Entrenamiento completado y guardado con éxito!',
           type: 'success',
@@ -497,7 +774,7 @@ export default function GymClient({
       setRutinas(prev => [...registrosOptimistas, ...prev])
       localStorage.removeItem(STORAGE_KEY)
       setSesionActiva(null)
-      setTimerRest(null)
+      detenerTimerDescanso()
       showToast({
         message: 'Guardado en tu móvil sin conexión. Se sincronizará en cuanto haya cobertura.',
         type: 'info',
@@ -509,11 +786,11 @@ export default function GymClient({
     }
   }
 
-  // Cancelar sesión activa pidiendo confirmación
-  function cancelarSesionActiva() {
-    if (confirm('¿Seguro que deseas salir del entrenamiento? Tu progreso guardado en este dispositivo se mantendrá.')) {
+  // Minimizar sesión activa (conserva progreso en local y deja el reloj de descanso corriendo)
+  function minimizarSesionActiva() {
+    if (sesionActiva) {
+      setSesionRecuperable(sesionActiva)
       setSesionActiva(null)
-      setTimerRest(null)
     }
   }
 
@@ -522,7 +799,7 @@ export default function GymClient({
     if (confirm('¿Descartar este entrenamiento por completo? Se borrarán los datos no guardados.')) {
       localStorage.removeItem(STORAGE_KEY)
       setSesionActiva(null)
-      setTimerRest(null)
+      detenerTimerDescanso()
       showToast({ message: 'Entrenamiento descartado', type: 'info' })
     }
   }
@@ -1002,24 +1279,47 @@ export default function GymClient({
               <div className="flex items-center gap-2">
                 {/* Timer de descanso flotante en cabecera */}
                 {timerRest && timerRest.activo && (
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 text-xs font-bold border border-amber-500/30 animate-pulse">
-                    <Timer className="w-4 h-4 text-amber-400" />
+                  <div className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                    timerRest.completado
+                      ? 'bg-emerald-500/25 text-emerald-300 border-emerald-500/40 animate-pulse'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                  }`}>
+                    <Timer className={`w-3.5 h-3.5 ${timerRest.completado ? 'text-emerald-400' : 'text-amber-400'}`} />
                     <span>
-                      Descanso: {Math.floor(timerRest.segundosRestantes / 60)}:{String(timerRest.segundosRestantes % 60).padStart(2, '0')}
+                      {timerRest.completado ? (
+                        '¡Descanso listo!'
+                      ) : (
+                        <>
+                          <span className="hidden sm:inline">Descanso: </span>
+                          {Math.floor(timerRest.segundosRestantes / 60)}:{String(timerRest.segundosRestantes % 60).padStart(2, '0')}
+                        </>
+                      )}
                     </span>
+                    {!timerRest.completado && (
+                      <button
+                        type="button"
+                        onClick={() => ajustarTiempoTimer(30)}
+                        className="px-1.5 py-0.5 ml-1 text-[10px] rounded bg-amber-500/30 hover:bg-amber-500/50 text-amber-200 transition-colors cursor-pointer"
+                        title="Añadir 30 segundos"
+                      >
+                        +30s
+                      </button>
+                    )}
                     <button
-                      onClick={() => setTimerRest(null)}
-                      className="ml-1 hover:text-white text-neutral-400"
-                      title="Detener temporizador"
+                      type="button"
+                      onClick={detenerTimerDescanso}
+                      className="ml-0.5 hover:text-white text-neutral-400 p-0.5 cursor-pointer"
+                      title="Cerrar temporizador"
                     >
                       ✕
                     </button>
                   </div>
                 )}
                 <button
-                  onClick={cancelarSesionActiva}
-                  className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white"
-                  title="Cerrar modal (mantiene progreso)"
+                  type="button"
+                  onClick={minimizarSesionActiva}
+                  className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white cursor-pointer"
+                  title="Minimizar (mantiene progreso y reloj de descanso)"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -1045,12 +1345,29 @@ export default function GymClient({
                 const prev = historialPrevio[ej.nombre.trim().toLowerCase()]
                 const pr = recordsPersonales[ej.nombre.trim().toLowerCase()] || 0
 
+                // Resolver objetivo de repeticiones y peso sugerido (desde sesión o desde plantillas)
+                const repeticionesObjetivo =
+                  ej.repeticionesGuia ||
+                  plantillas.find(p => p.id === sesionActiva.plantillaId)?.ejercicios.find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.repeticiones ||
+                  plantillas.flatMap(p => p.ejercicios).find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.repeticiones;
+
+                const pesoSugerido =
+                  ej.pesoSugerido !== undefined
+                    ? ej.pesoSugerido
+                    : (plantillas.find(p => p.id === sesionActiva.plantillaId)?.ejercicios.find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.peso_kg ??
+                       plantillas.flatMap(p => p.ejercicios).find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.peso_kg);
+
+                const notasGuia =
+                  ej.notasGuia ||
+                  plantillas.find(p => p.id === sesionActiva.plantillaId)?.ejercicios.find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.notas ||
+                  plantillas.flatMap(p => p.ejercicios).find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.notas;
+
                 return (
                   <div
                     key={ejIdx}
                     className="p-4 rounded-xl border bg-neutral-900/50 border-neutral-800 space-y-3"
                   >
-                    {/* Fila del ejercicio: Nombre + Descanso + Acciones */}
+                    {/* Fila del ejercicio: Nombre + Abanico de reps + Descanso + Acciones */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-800/80 pb-2.5">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1074,14 +1391,43 @@ export default function GymClient({
                             {ej.completado ? '✓ Incluido' : '○ Omitido'}
                           </button>
                           <h4 className={`font-bold text-sm ${ej.completado ? 'text-neutral-100' : 'text-neutral-500 line-through'}`}>{ej.nombre}</h4>
+                          {repeticionesObjetivo && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1 shadow-sm">
+                              🎯 {repeticionesObjetivo} reps
+                            </span>
+                          )}
                           {ej.descanso && (
                             <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
                               ⏱️ {ej.descanso}
                             </span>
                           )}
                         </div>
+
+                        {/* Línea descriptiva con objetivo de reps, peso sugerido y notas técnicas */}
+                        <div className="flex items-center gap-2 text-xs text-neutral-400 mt-1 flex-wrap">
+                          {repeticionesObjetivo && (
+                            <span>
+                              Objetivo: <strong className="text-neutral-200 font-semibold">{repeticionesObjetivo} reps</strong>
+                            </span>
+                          )}
+                          {pesoSugerido !== undefined && pesoSugerido > 0 && (
+                            <>
+                              <span className="text-neutral-600">·</span>
+                              <span>
+                                Sugerido: <strong className="text-emerald-400 font-semibold">{pesoSugerido} kg</strong>
+                              </span>
+                            </>
+                          )}
+                          {notasGuia && (
+                            <>
+                              <span className="text-neutral-600">·</span>
+                              <span className="text-neutral-300 italic">💡 {notasGuia}</span>
+                            </>
+                          )}
+                        </div>
+
                         {prev && (
-                          <div className="text-[11px] text-neutral-400 mt-0.5">
+                          <div className="text-[11px] text-neutral-400 mt-1">
                             Última sesión ({formatFecha(prev.fecha, 'd MMM')}):{' '}
                             <span className="text-emerald-400 font-medium">{prev.resumenTexto}</span>
                           </div>
@@ -1093,7 +1439,7 @@ export default function GymClient({
                           <button
                             type="button"
                             onClick={() => copiarSesionAnterior(ejIdx)}
-                            className="btn btn-ghost btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-neutral-300 hover:text-emerald-300"
+                            className="btn btn-ghost btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-neutral-300 hover:text-emerald-300 cursor-pointer"
                             title="Rellenar series con los valores de la última vez"
                           >
                             <Copy className="w-3 h-3" />
@@ -1103,7 +1449,7 @@ export default function GymClient({
                         <button
                           type="button"
                           onClick={() => agregarSerie(ejIdx)}
-                          className="btn btn-ghost btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-emerald-400 hover:bg-emerald-500/10"
+                          className="btn btn-ghost btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
                         >
                           <Plus className="w-3 h-3" />
                           <span>+ Serie</span>
@@ -1116,7 +1462,12 @@ export default function GymClient({
                       <div className="grid grid-cols-12 gap-2 text-[10px] uppercase font-semibold text-neutral-400 px-2">
                         <span className="col-span-2 text-center">Serie</span>
                         <span className="col-span-3 text-center">Peso (kg)</span>
-                        <span className="col-span-3 text-center">Reps</span>
+                        <span className="col-span-3 text-center flex items-center justify-center gap-1">
+                          <span>Reps</span>
+                          {repeticionesObjetivo && (
+                            <span className="text-sky-300 font-normal lowercase text-[9px]">({repeticionesObjetivo})</span>
+                          )}
+                        </span>
                         <span className="col-span-2 text-center">RIR</span>
                         <span className="col-span-2 text-center">Listo</span>
                       </div>
@@ -1166,13 +1517,13 @@ export default function GymClient({
                               </div>
                             </div>
 
-                            {/* Repeticiones */}
+                            {/* Repeticiones con placeholder del abanico objetivo */}
                             <div className="col-span-3">
                               <input
                                 type="text"
                                 inputMode="numeric"
                                 value={serie.repeticiones === 0 ? '' : serie.repeticiones}
-                                placeholder="10"
+                                placeholder={repeticionesObjetivo || "10"}
                                 onFocus={e => e.target.select()}
                                 onChange={e => {
                                   const val = parseInt(e.target.value) || 0
@@ -1219,7 +1570,7 @@ export default function GymClient({
                         <button
                           type="button"
                           onClick={() => eliminarSerie(ejIdx)}
-                          className="text-[10px] text-neutral-500 hover:text-red-400 transition-colors"
+                          className="text-[10px] text-neutral-500 hover:text-red-400 transition-colors cursor-pointer"
                         >
                           Quitar última serie
                         </button>
@@ -1243,8 +1594,8 @@ export default function GymClient({
               <div className="flex items-center gap-3 w-full sm:w-auto">
                 <button
                   type="button"
-                  onClick={cancelarSesionActiva}
-                  className="btn btn-ghost flex-1 sm:flex-none text-xs"
+                  onClick={minimizarSesionActiva}
+                  className="btn btn-ghost flex-1 sm:flex-none text-xs cursor-pointer"
                 >
                   Minimizar
                 </button>
@@ -1252,7 +1603,7 @@ export default function GymClient({
                   type="button"
                   onClick={finalizarEntrenamiento}
                   disabled={guardando}
-                  className="btn btn-primary flex-1 sm:flex-none flex items-center justify-center gap-2 text-xs py-2 px-5 text-white"
+                  className="btn btn-primary flex-1 sm:flex-none flex items-center justify-center gap-2 text-xs py-2 px-5 text-white cursor-pointer"
                   style={{ background: 'var(--accent)' }}
                 >
                   {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -1260,6 +1611,54 @@ export default function GymClient({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Widget flotante de descanso cuando la sesión está minimizada o fuera del modal */}
+      {!sesionActiva && timerRest && timerRest.activo && (
+        <div className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50 flex items-center gap-3 p-3 rounded-2xl bg-neutral-900/95 border border-amber-500/40 shadow-2xl backdrop-blur-md text-amber-300 animate-slide-up">
+          <div className={`p-2 rounded-xl ${timerRest.completado ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+            <Timer className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-bold tracking-wider text-neutral-400">
+              Descanso · {timerRest.ejercicio}
+            </div>
+            <div className={`text-base font-extrabold ${timerRest.completado ? 'text-emerald-400' : 'text-amber-300'}`}>
+              {timerRest.completado
+                ? '¡Listo para siguiente serie!'
+                : `${Math.floor(timerRest.segundosRestantes / 60)}:${String(timerRest.segundosRestantes % 60).padStart(2, '0')}`}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 ml-2">
+            {!timerRest.completado && (
+              <button
+                type="button"
+                onClick={() => ajustarTiempoTimer(30)}
+                className="px-2 py-1 text-xs rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold transition-colors cursor-pointer"
+                title="Añadir 30s"
+              >
+                +30s
+              </button>
+            )}
+            {sesionRecuperable && (
+              <button
+                type="button"
+                onClick={reanudarSesionRecuperada}
+                className="btn btn-primary btn-sm text-xs py-1 px-2.5 bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
+              >
+                Abrir entreno
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={detenerTimerDescanso}
+              className="p-1 hover:text-white text-neutral-400 text-xs cursor-pointer"
+              title="Cerrar temporizador"
+            >
+              ✕
+            </button>
           </div>
         </div>
       )}

@@ -322,13 +322,22 @@ export async function responderConsultaHoy(msg: TelegramMessage): Promise<{ chat
     .map(i => `📅 **${i.titulo}** (${i.hora_inicio || 'todo el día'})`)
     .join('\n')
 
+  const hoyStr = format(hoy, 'yyyy-MM-dd')
   const tareasHoy = activos
     .filter(i => i.tipo !== 'evento')
+    .sort((a, b) => {
+      const aMiDia = (a.metadata as any)?.mi_dia_fecha === hoyStr ? 1 : 0
+      const bMiDia = (b.metadata as any)?.mi_dia_fecha === hoyStr ? 1 : 0
+      if (aMiDia !== bMiDia) return bMiDia - aMiDia
+      return 0
+    })
     .slice(0, 5)
     .map(i => {
+      const esMiDia = (i.metadata as any)?.mi_dia_fecha === hoyStr
       const urgency = i.prioridad === 'urgente' ? '🔴' : i.prioridad === 'alta' ? '🟠' : '🟡'
       const vence = i.fecha_limite ? ` (vence ${new Date(i.fecha_limite!).toLocaleDateString('es-ES')})` : ''
-      return `${urgency} ${i.titulo}${vence}`
+      const tagMiDia = esMiDia ? ' ☀️ [Mi Día]' : ''
+      return `${urgency} ${i.titulo}${tagMiDia}${vence}`
     })
     .join('\n')
 

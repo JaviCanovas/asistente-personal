@@ -12,6 +12,24 @@ export default function ServiceWorkerRegister() {
       return
     }
 
+    // En entorno de desarrollo (Next.js Turbopack HMR), desregistrar el Service Worker y limpiar cachés
+    // para evitar que chunks desactualizados provoquen errores de "module factory is not available"
+    if (process.env.NODE_ENV === 'development') {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        for (const reg of regs) {
+          reg.unregister()
+        }
+      })
+      if ('caches' in window) {
+        caches.keys().then(keys => {
+          for (const key of keys) {
+            caches.delete(key)
+          }
+        })
+      }
+      return
+    }
+
     let refreshing = false
     const hadController = Boolean(navigator.serviceWorker.controller)
 

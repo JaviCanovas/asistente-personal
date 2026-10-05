@@ -62,6 +62,11 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // 0. En desarrollo local con Next.js Turbopack HMR, no interceptar peticiones con caché
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.port === '3000') {
+    return;
+  }
+
   // 1. Métodos que no sean GET nunca se cachean en el SW
   if (request.method !== 'GET') {
     return;
@@ -202,9 +207,63 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
-// Manejo de mensajes desde el cliente (p. ej., SKIP_WAITING para actualización)
+let restTimerTimeout = null;
+
+// Manejo de mensajes desde el cliente (p. ej., SKIP_WAITING para actualización, o timer de descanso)
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  if (!event.data) return;
+
+  if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+
+  if (event.data.type === 'START_REST_TIMER') {
+    const { targetEndTime, ejercicio } = event.data;
+    if (restTimerTimeout) clearTimeout(restTimerTimeout);
+
+    const delay = Math.max(0, targetEndTime - Date.now());
+    restTimerTimeout = setTimeout(() => {
+      self.registration.showNotification('⏱️ ¡Descanso completado!', {
+        body: `Tiempo de descanso cumplido para ${ejercicio || 'tu ejercicio'}. ¡A por la siguiente serie!`,
+        icon: '/icon-192.png',
+        badge: '/favicon-32.png',
+        tag: 'gym-rest-timer',
+        vibrate: [200, 100, 200, 100, 400],
+        renotify: true,
+        data: { url: '/gym' }
+      });
+      restTimerTimeout = null;
+    }, delay);
+  }
+
+  if (event.data.type === 'CANCEL_REST_TIMER') {
+    if (restTimerTimeout) {
+      clearTimeout(restTimerTimeout);
+      restTimerTimeout = null;
+    }
+  }
 });
+
+// Click en notificación del temporizador de descanso
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/gym';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          if (client.url && client.url.includes('/gym')) {
+            return client.focus();
+          }
+          client.navigate(targetUrl);
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
+

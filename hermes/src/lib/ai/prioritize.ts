@@ -12,30 +12,75 @@ export function priorizarItemsDeHoy(items: Item[]): ItemPriorizado[] {
   const ahora = new Date()
   const hoy = startOfDay(ahora)
   const finHoy = endOfDay(ahora)
+  const hoyStr = format(ahora, 'yyyy-MM-dd')
 
   const candidatos = items.filter(item => {
     if (item.estado === 'hecho' || item.estado === 'archivado') return false
+
+    // Si es un evento, solo incluir si ocurre hoy
     if (item.tipo === 'evento') {
-      // Incluir eventos de hoy
       if (!item.fecha_evento) return false
-      return isWithinInterval(new Date(item.fecha_evento), { start: hoy, end: finHoy })
+      if (item.fecha_evento.slice(0, 10) === hoyStr) return true
+      try {
+        return isWithinInterval(new Date(item.fecha_evento), { start: hoy, end: finHoy })
+      } catch {
+        return false
+      }
     }
-    // Tareas, ideas, recordatorios activos + sin_procesar urgentes
+
+    // Tareas con fecha límite en el futuro (después de hoy) pertenecen a "Próximos eventos", no a hoy
+    if (item.fecha_limite) {
+      const fechaCorta = item.fecha_limite.slice(0, 10)
+      if (fechaCorta > hoyStr) return false
+    }
+
+    // Items con fecha de evento en el futuro tampoco son para hoy
+    if (item.fecha_evento) {
+      const fechaCorta = item.fecha_evento.slice(0, 10)
+      if (fechaCorta > hoyStr) return false
+    }
+
+    // Tareas, ideas, recordatorios activos + sin_procesar (de hoy, vencidas o sin fecha asignada)
     return item.estado === 'activo' || item.estado === 'sin_procesar'
   })
 
   const priorizados: ItemPriorizado[] = candidatos.map(item => {
-    const puntuacion = calcularPuntuacionPrioridad(item.prioridad, item.fecha_limite)
-    const razon = generarRazon(item, puntuacion)
-    return { item, puntuacion, razon }
+    const miDiaFecha = (item.metadata as any)?.mi_dia_fecha
+    const esMiDiaHoy = miDiaFecha === hoyStr || (typeof miDiaFecha === 'string' && miDiaFecha.startsWith(hoyStr))
+    const esMiDiaPasado = Boolean(miDiaFecha && miDiaFecha < hoyStr)
+
+    const puntuacionBase = calcularPuntuacionPrioridad(item.prioridad, item.fecha_limite)
+    
+    // Tareas de "Mi Día" para hoy tienen máxima prioridad absoluta (+1000)
+    // Tareas de "Mi Día" de días anteriores pendientes de completar tienen prioridad destacada (+400)
+    let puntuacion = puntuacionBase
+    if (esMiDiaHoy) {
+      puntuacion += 1000
+    } else if (esMiDiaPasado) {
+      puntuacion += 400
+    }
+
+    const razon = generarRazon(item, puntuacion, esMiDiaHoy, esMiDiaPasado)
+    return { item, puntuacion, razon, esMiDia: esMiDiaHoy }
   })
 
   priorizados.sort((a, b) => b.puntuacion - a.puntuacion)
   return priorizados
 }
 
-function generarRazon(item: Item, puntuacion: number): string {
+function generarRazon(
+  item: Item,
+  puntuacion: number,
+  esMiDiaHoy?: boolean,
+  esMiDiaPasado?: boolean
+): string {
   const razones: string[] = []
+
+  if (esMiDiaHoy) {
+    razones.push('En Mi Día')
+  } else if (esMiDiaPasado) {
+    razones.push('Pendiente de Mi Día anterior')
+  }
 
   if (item.fecha_limite) {
     try {
@@ -241,3 +286,236 @@ export function generarResumenSemanal(
     generado_en: new Date().toISOString(),
   }
 }
+
+// ——— Próximos Eventos (ordenados por proximidad de fecha) ——————
+
+export function parsearFechaLocal(fechaStr: string): Date {
+  if (!fechaStr) return new Date()
+  const fechaLimpia = fechaStr.trim()
+  if (fechaLimpia.length >= 10 && fechaLimpia.includes('-')) {
+    const parte = fechaLimpia.slice(0, 10)
+    const [y, m, d] = parte.split('-').map(Number)
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return new Date(y, m - 1, d)
+    }
+  }
+  const d = new Date(fechaStr)
+  return isNaN(d.getTime()) ? new Date() : d
+}
+
+export function obtenerProximosEventos(items: Item[]): Item[] {
+  const ahora = new Date()
+  const y = ahora.getFullYear()
+  const m = String(ahora.getMonth() + 1).padStart(2, '0')
+  const d = String(ahora.getDate()).padStart(2, '0')
+  const hoyStr = `${y}-${m}-${d}`
+
+  const candidatos = items.filter(item => {
+    if (item.estado === 'hecho' || item.estado === 'archivado') return false
+
+    // Debe tener alguna fecha registrada
+    const fechaInicio = item.fecha_evento || item.fecha_limite
+    if (!fechaInicio) return false
+
+    const fechaFin = item.fecha_limite || item.fecha_evento || fechaInicio
+
+    const inicioCorta = fechaInicio.slice(0, 10)
+    const finCorta = fechaFin.slice(0, 10)
+
+    // Si terminó antes de hoy, ya es un evento pasado
+    if (finCorta < hoyStr) return false
+
+    // Si empieza hoy o en el futuro, o está en curso hoy
+    return inicioCorta >= hoyStr || finCorta >= hoyStr
+  })
+
+  // Ordenar por proximidad de fecha ascendente (más cercano a hoy primero)
+  candidatos.sort((a, b) => {
+    const fechaA = (a.fecha_evento || a.fecha_limite || '').slice(0, 10)
+    const fechaB = (b.fecha_evento || b.fecha_limite || '').slice(0, 10)
+
+    // Si la fecha de inicio es anterior a hoy pero la fecha de fin sigue vigente hoy,
+    // tratarlo como fecha de hoy para que no se quede desordenado en el pasado
+    const efectivaA = fechaA < hoyStr ? hoyStr : fechaA
+    const efectivaB = fechaB < hoyStr ? hoyStr : fechaB
+
+    const compFecha = efectivaA.localeCompare(efectivaB)
+    if (compFecha !== 0) return compFecha
+
+    // Misma fecha -> ordenar por hora_inicio si existe
+    const horaA = a.hora_inicio || '23:59'
+    const horaB = b.hora_inicio || '23:59'
+    const compHora = horaA.localeCompare(horaB)
+    if (compHora !== 0) return compHora
+
+    // Misma hora -> prioridad urgente/alta primero
+    const pesos: Record<string, number> = { urgente: 4, alta: 3, media: 2, baja: 1 }
+    const pesoA = pesos[a.prioridad] || 1
+    const pesoB = pesos[b.prioridad] || 1
+    return pesoB - pesoA
+  })
+
+  return candidatos
+}
+
+export type CategoriaEvento = 'examen' | 'entrega' | 'festivo' | 'google' | 'tarea' | 'evento'
+
+export interface DetalleCategoriaEvento {
+  categoria: CategoriaEvento
+  etiqueta: string
+  icono: string
+  colorTexto: string
+  colorBg: string
+  colorBorder: string
+}
+
+export function categorizarEvento(item: Item): DetalleCategoriaEvento {
+  const tituloLower = (item.titulo || '').toLowerCase()
+  const etiquetasLower = (item.etiquetas || []).map(e => String(e).toLowerCase())
+
+  if (
+    tituloLower.includes('examen') ||
+    tituloLower.includes('convocatoria') ||
+    etiquetasLower.some(e => e.includes('examen') || e.includes('convocatoria'))
+  ) {
+    return {
+      categoria: 'examen',
+      etiqueta: 'Examen',
+      icono: '🎓',
+      colorTexto: 'text-amber-400',
+      colorBg: 'bg-amber-500/10',
+      colorBorder: 'border-amber-500/25',
+    }
+  }
+
+  if (
+    tituloLower.includes('entrega') ||
+    tituloLower.includes('práctica') ||
+    tituloLower.includes('practica') ||
+    tituloLower.includes('boletín') ||
+    tituloLower.includes('boletin') ||
+    tituloLower.includes('trabajo') ||
+    etiquetasLower.some(e => e.includes('evaluación') || e.includes('evaluacion') || e.includes('entrega') || e.includes('práctica'))
+  ) {
+    return {
+      categoria: 'entrega',
+      etiqueta: 'Entrega',
+      icono: '📦',
+      colorTexto: 'text-violet-400',
+      colorBg: 'bg-violet-500/10',
+      colorBorder: 'border-violet-500/25',
+    }
+  }
+
+  if (
+    etiquetasLower.some(e => e.includes('festivo') || e.includes('vacaciones') || e.includes('no lectivo')) ||
+    tituloLower.includes('festivo') ||
+    tituloLower.includes('vacaciones') ||
+    tituloLower.includes('no lectivo')
+  ) {
+    return {
+      categoria: 'festivo',
+      etiqueta: 'No lectivo',
+      icono: '🏖️',
+      colorTexto: 'text-emerald-400',
+      colorBg: 'bg-emerald-500/10',
+      colorBorder: 'border-emerald-500/25',
+    }
+  }
+
+  if (item.origen === 'google-calendar' || item.google_event_id) {
+    return {
+      categoria: 'google',
+      etiqueta: 'Google Cal',
+      icono: '📅',
+      colorTexto: 'text-sky-400',
+      colorBg: 'bg-sky-500/10',
+      colorBorder: 'border-sky-500/25',
+    }
+  }
+
+  if (item.tipo === 'tarea') {
+    return {
+      categoria: 'tarea',
+      etiqueta: 'Tarea',
+      icono: '⏰',
+      colorTexto: 'text-indigo-400',
+      colorBg: 'bg-indigo-500/10',
+      colorBorder: 'border-indigo-500/25',
+    }
+  }
+
+  return {
+    categoria: 'evento',
+    etiqueta: 'Evento',
+    icono: '📅',
+    colorTexto: 'text-sky-400',
+    colorBg: 'bg-sky-500/10',
+    colorBorder: 'border-sky-500/25',
+  }
+}
+
+export function getEtiquetaFechaRelativa(fechaStr: string, horaInicio?: string): {
+  texto: string
+  esHoy: boolean
+  esManana: boolean
+  diasDiferencia: number
+  etiquetaDias: string
+} {
+  const ahora = new Date()
+  const y = ahora.getFullYear()
+  const m = String(ahora.getMonth() + 1).padStart(2, '0')
+  const d = String(ahora.getDate()).padStart(2, '0')
+  const hoyStr = `${y}-${m}-${d}`
+
+  const fechaCorta = fechaStr.slice(0, 10)
+  const fechaObj = parsearFechaLocal(fechaCorta)
+  const hoyObj = new Date(y, ahora.getMonth(), ahora.getDate())
+  const diffMs = fechaObj.getTime() - hoyObj.getTime()
+  const diffDias = Math.round(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDias === 0 || fechaCorta === hoyStr) {
+    return {
+      texto: horaInicio ? `Hoy · ${horaInicio}` : 'Hoy',
+      esHoy: true,
+      esManana: false,
+      diasDiferencia: 0,
+      etiquetaDias: 'Hoy',
+    }
+  }
+
+  if (diffDias === 1) {
+    return {
+      texto: horaInicio ? `Mañana · ${horaInicio}` : 'Mañana',
+      esHoy: false,
+      esManana: true,
+      diasDiferencia: 1,
+      etiquetaDias: 'Mañana',
+    }
+  }
+
+  const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+  const mes = meses[fechaObj.getMonth()]
+  const año = fechaObj.getFullYear() !== y ? ` ${fechaObj.getFullYear()}` : ''
+
+  if (diffDias > 1 && diffDias <= 6) {
+    const nombresDias = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+    const diaSemana = nombresDias[fechaObj.getDay()]
+    return {
+      texto: `${diaSemana} ${fechaObj.getDate()} ${mes}`,
+      esHoy: false,
+      esManana: false,
+      diasDiferencia: diffDias,
+      etiquetaDias: `En ${diffDias} días`,
+    }
+  }
+
+  return {
+    texto: `${fechaObj.getDate()} ${mes}${año}`,
+    esHoy: false,
+    esManana: false,
+    diasDiferencia: diffDias,
+    etiquetaDias: diffDias > 0 ? `En ${diffDias} días` : '',
+  }
+}
+

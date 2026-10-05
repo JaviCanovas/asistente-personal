@@ -492,6 +492,7 @@ export interface EjercicioSesionInput {
   series: SerieInput[]
   descanso?: string
   notasGuia?: string
+  repeticionesGuia?: string
 }
 
 export async function guardarSesionEstructurada(payload: {

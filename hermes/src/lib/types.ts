@@ -128,6 +128,7 @@ export interface ItemPriorizado {
   item: Item
   puntuacion: number
   razon: string
+  esMiDia?: boolean
 }
 
 export interface BloqueLibre {
