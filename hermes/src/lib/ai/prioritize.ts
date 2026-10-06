@@ -55,7 +55,11 @@ export function priorizarItemsDeHoy(items: Item[]): ItemPriorizado[] {
     // Tareas de "Mi Día" de días anteriores pendientes de completar tienen prioridad destacada (+400)
     let puntuacion = puntuacionBase
     if (esMiDiaHoy) {
-      puntuacion += 1000
+      const ordenRaw = (item.metadata as any)?.mi_dia_orden
+      const ordenNum = ordenRaw !== undefined && ordenRaw !== null && ordenRaw !== '' ? Number(ordenRaw) : NaN
+      const orden = !isNaN(ordenNum) ? ordenNum : 999
+      // Máxima prioridad a los de Mi Día, respetando estrictamente el orden establecido por el usuario
+      puntuacion = 10000 - Math.min(orden, 500) * 10 + (puntuacionBase / 100)
     } else if (esMiDiaPasado) {
       puntuacion += 400
     }
@@ -77,7 +81,13 @@ function generarRazon(
   const razones: string[] = []
 
   if (esMiDiaHoy) {
-    razones.push('En Mi Día')
+    const ordenRaw = (item.metadata as any)?.mi_dia_orden
+    const ordenNum = ordenRaw !== undefined && ordenRaw !== null && ordenRaw !== '' ? Number(ordenRaw) : NaN
+    if (!isNaN(ordenNum)) {
+      razones.push(`En Mi Día (#${ordenNum + 1})`)
+    } else {
+      razones.push('En Mi Día')
+    }
   } else if (esMiDiaPasado) {
     razones.push('Pendiente de Mi Día anterior')
   }

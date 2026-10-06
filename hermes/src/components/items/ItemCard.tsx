@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Archive, Trash2, Tag, Calendar, ChevronRight, Circle, CheckCircle2, MinusCircle, Loader2, CheckSquare, Sun } from 'lucide-react'
+import { Archive, Trash2, Tag, Calendar, ChevronRight, Circle, CheckCircle2, MinusCircle, Loader2, CheckSquare, Sun, GripVertical, ChevronUp, ChevronDown, ArrowRight, ArrowLeft } from 'lucide-react'
 import type { Item } from '@/lib/types'
 import { TIPO_CONFIG, PRIORIDAD_CONFIG, cn, formatFechaRelativa, truncate } from '@/lib/utils'
 import { marcarHecho, archivarItem, eliminarItem } from '@/lib/actions/items'
@@ -17,6 +17,13 @@ interface ItemCardProps {
   onArchived?: (id: string) => void
   onDone?: (id: string, hecho: boolean) => void
   onRemoveFromMyDay?: (id: string) => void
+  onMoveToTomorrow?: (id: string) => void
+  onMoveToToday?: (id: string) => void
+  orderIndex?: number
+  onMoveUp?: () => void
+  onMoveDown?: () => void
+  canMoveUp?: boolean
+  canMoveDown?: boolean
 }
 
 export default function ItemCard({
@@ -29,6 +36,13 @@ export default function ItemCard({
   onArchived,
   onDone,
   onRemoveFromMyDay,
+  onMoveToTomorrow,
+  onMoveToToday,
+  orderIndex,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp,
+  canMoveDown,
 }: ItemCardProps) {
   const { showToast } = useToast()
   const [optimisticDone, setOptimisticDone] = useState<boolean | null>(null)
@@ -188,6 +202,54 @@ export default function ItemCard({
       />
 
       <div className="flex items-start gap-3">
+        {/* Control de Orden / Prioridad diaria (Mi Día) */}
+        {typeof orderIndex === 'number' && (
+          <div className="flex items-center gap-1 shrink-0 mt-0.5 select-none -ml-1">
+            <div
+              className="cursor-grab active:cursor-grabbing p-1 text-slate-500 hover:text-purple-400 transition-colors"
+              title="Arrastra para reordenar la prioridad"
+            >
+              <GripVertical className="w-4 h-4" />
+            </div>
+            <span
+              className="text-[11px] font-bold font-mono px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 min-w-[24px] text-center"
+              title={`Prioridad #${orderIndex + 1}`}
+            >
+              #{orderIndex + 1}
+            </span>
+            {(onMoveUp || onMoveDown) && (
+              <div className="flex flex-col -space-y-1">
+                <button
+                  type="button"
+                  disabled={!canMoveUp}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onMoveUp?.()
+                  }}
+                  className="p-0.5 text-slate-500 hover:text-white disabled:opacity-20 disabled:hover:text-slate-500 transition-colors cursor-pointer"
+                  title="Subir prioridad"
+                  aria-label="Subir prioridad"
+                >
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={!canMoveDown}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onMoveDown?.()
+                  }}
+                  className="p-0.5 text-slate-500 hover:text-white disabled:opacity-20 disabled:hover:text-slate-500 transition-colors cursor-pointer"
+                  title="Bajar prioridad"
+                  aria-label="Bajar prioridad"
+                >
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Toggle hecho optimista */}
         {!isGoogleCalendar ? (
           <button
@@ -247,7 +309,14 @@ export default function ItemCard({
             {(item.metadata as any)?.mi_dia_fecha && (
               <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
                 <Sun className="w-3 h-3 text-amber-400" />
-                <span>Mi Día</span>
+                <span>
+                  Mi Día
+                  {(() => {
+                    const ordenVal = (item.metadata as any)?.mi_dia_orden
+                    const num = ordenVal !== undefined && ordenVal !== null && ordenVal !== '' ? Number(ordenVal) : NaN
+                    return !isNaN(num) ? ` · #${num + 1}` : ''
+                  })()}
+                </span>
               </span>
             )}
           </div>
@@ -340,47 +409,82 @@ export default function ItemCard({
 
         {/* Acciones */}
         <div
-          className="flex items-center gap-1 flex-shrink-0 opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+          className="flex items-center gap-1.5 flex-shrink-0"
           style={{ marginTop: 2 }}
         >
-          {!isGoogleCalendar && onRemoveFromMyDay && (
+          {/* Botón Mandar a Mañana (visible para tareas no completadas) */}
+          {!isHecho && onMoveToTomorrow && (
             <button
               type="button"
-              onClick={() => onRemoveFromMyDay(item.id)}
+              onClick={(e) => {
+                e.stopPropagation()
+                onMoveToTomorrow(item.id)
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 hover:text-white border border-purple-500/25 hover:border-purple-500/40 transition-all duration-200 shadow-sm active:scale-95 group/btn"
+              title="Mandar tarea a Mañana"
+            >
+              <span>Mañana</span>
+              <ArrowRight className="w-3.5 h-3.5 text-purple-400 group-hover/btn:translate-x-0.5 transition-transform" />
+            </button>
+          )}
+
+          {/* Botón Mandar a Hoy (visible para tareas no completadas en pestaña Mañana) */}
+          {!isHecho && onMoveToToday && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onMoveToToday(item.id)
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-white border border-amber-500/25 hover:border-amber-500/40 transition-all duration-200 shadow-sm active:scale-95 group/btn"
+              title="Mandar tarea a Hoy"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-amber-400 group-hover/btn:-translate-x-0.5 transition-transform" />
+              <span>Hoy</span>
+            </button>
+          )}
+
+          {/* Acciones secundarias (visibles al hover en desktop, tenues en móvil) */}
+          <div className="flex items-center gap-1 opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+            {!isGoogleCalendar && onRemoveFromMyDay && (
+              <button
+                type="button"
+                onClick={() => onRemoveFromMyDay(item.id)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+                title="Quitar de Mi Día"
+              >
+                <MinusCircle className="w-4 h-4" />
+              </button>
+            )}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit(item)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                title="Editar"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+            {!isGoogleCalendar && (
+              <button
+                type="button"
+                onClick={handleArchivar}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors cursor-pointer"
+                title="Archivar"
+              >
+                <Archive className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleEliminar}
               className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
-              title="Quitar de Mi Día"
+              title="Eliminar"
             >
-              <MinusCircle className="w-4 h-4" />
+              <Trash2 className="w-4 h-4" />
             </button>
-          )}
-          {onEdit && (
-            <button
-              type="button"
-              onClick={() => onEdit(item)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-              title="Editar"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-          {!isGoogleCalendar && (
-            <button
-              type="button"
-              onClick={handleArchivar}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors cursor-pointer"
-              title="Archivar"
-            >
-              <Archive className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleEliminar}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
-            title="Eliminar"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          </div>
         </div>
       </div>
     </div>

@@ -473,7 +473,13 @@ export async function buscarItems(query: string) {
 
 export async function getMiDiaItems(fecha: string) {
   if (!isSupabaseConfigured()) {
-    return ITEMS_DEMO.filter(i => (i.metadata as any)?.mi_dia_fecha === fecha)
+    const items = ITEMS_DEMO.filter(i => (i.metadata as any)?.mi_dia_fecha === fecha)
+    return items.sort((a, b) => {
+      const ordenA = typeof (a.metadata as any)?.mi_dia_orden === 'number' ? (a.metadata as any).mi_dia_orden : 9999
+      const ordenB = typeof (b.metadata as any)?.mi_dia_orden === 'number' ? (b.metadata as any).mi_dia_orden : 9999
+      if (ordenA !== ordenB) return ordenA - ordenB
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    })
   }
 
   const supabase = await createClient()
@@ -481,16 +487,22 @@ export async function getMiDiaItems(fecha: string) {
     .from('items')
     .select('*, proyecto:proyectos(id, nombre, color)')
     .eq('metadata->>mi_dia_fecha', fecha)
-    .order('created_at', { ascending: false })
 
   if (error) {
     console.error('[getMiDiaItems]', error.message)
     return []
   }
-  return data as Item[]
+
+  const items = (data as Item[]) || []
+  return items.sort((a, b) => {
+    const ordenA = typeof (a.metadata as any)?.mi_dia_orden === 'number' ? (a.metadata as any).mi_dia_orden : 9999
+    const ordenB = typeof (b.metadata as any)?.mi_dia_orden === 'number' ? (b.metadata as any).mi_dia_orden : 9999
+    if (ordenA !== ordenB) return ordenA - ordenB
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  })
 }
 
-export async function agregarAMiDia(id: string, fecha: string) {
+export async function agregarAMiDia(id: string, fecha: string, nuevoOrden?: number) {
   if (!isSupabaseConfigured()) return
 
   const supabase = await createClient()
@@ -505,7 +517,11 @@ export async function agregarAMiDia(id: string, fecha: string) {
   if (fetchError) throw new Error(fetchError.message)
 
   const metadataActual = itemAntes?.metadata || {}
-  const metadataNuevo = { ...metadataActual, mi_dia_fecha: fecha }
+  const metadataNuevo = {
+    ...metadataActual,
+    mi_dia_fecha: fecha,
+    ...(nuevoOrden !== undefined ? { mi_dia_orden: nuevoOrden } : {}),
+  }
 
   const updateData: any = { metadata: metadataNuevo }
   if (itemAntes?.estado === 'sin_procesar') {
@@ -542,10 +558,90 @@ export async function quitarDeMiDia(id: string) {
 
   const metadataActual = { ...(itemAntes?.metadata || {}) }
   delete metadataActual.mi_dia_fecha
+  delete (metadataActual as any).mi_dia_orden
 
   const { error } = await supabase
     .from('items')
     .update({ metadata: metadataActual })
+    .eq('id', id)
+
+  if (error) throw new Error(error.message)
+
+  revalidatePath('/')
+  revalidatePath('/inbox')
+  revalidatePath('/hoy')
+  revalidatePath('/tareas')
+  revalidatePath('/mi-dia')
+}
+
+export async function reordenarMiDia(orderedIds: string[], fecha: string) {
+  if (!isSupabaseConfigured() || !orderedIds.length) return
+
+  const supabase = await createClient()
+
+  await Promise.all(
+    orderedIds.map(async (id, index) => {
+      const { data: item } = await supabase
+        .from('items')
+        .select('metadata')
+        .eq('id', id)
+        .single()
+
+      const currentMeta = (item?.metadata as Record<string, unknown>) || {}
+      const updatedMeta = {
+        ...currentMeta,
+        mi_dia_fecha: fecha,
+        mi_dia_orden: index,
+      }
+
+      await supabase
+        .from('items')
+        .update({ metadata: updatedMeta })
+        .eq('id', id)
+    })
+  )
+
+  revalidatePath('/')
+  revalidatePath('/mi-dia')
+  revalidatePath('/hoy')
+  revalidatePath('/tareas')
+}
+
+export async function moverAManana(id: string, fechaHoy: string, fechaManana: string) {
+  if (!isSupabaseConfigured()) return
+
+  const supabase = await createClient()
+
+  const { data: itemAntes, error: fetchError } = await supabase
+    .from('items')
+    .select('metadata, estado, fecha_limite')
+    .eq('id', id)
+    .single()
+
+  if (fetchError) throw new Error(fetchError.message)
+
+  const metadataActual = (itemAntes?.metadata as Record<string, unknown>) || {}
+  const metadataNuevo = {
+    ...metadataActual,
+    mi_dia_fecha: fechaManana,
+  }
+
+  const updateData: any = { metadata: metadataNuevo }
+  if (itemAntes?.estado === 'sin_procesar') {
+    updateData.estado = 'activo'
+  }
+
+  // Si la fecha límite estaba puesta para hoy, aplazarla a mañana también
+  if (itemAntes?.fecha_limite) {
+    const fechaLimiteCorta = itemAntes.fecha_limite.slice(0, 10)
+    if (fechaLimiteCorta === fechaHoy) {
+      updateData.fecha_limite = fechaManana
+    }
+  }
+
+  const { error } = await supabase
+    .from('items')
+    .update(updateData)
     .eq('id', id)
 
   if (error) throw new Error(error.message)

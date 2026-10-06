@@ -1,10 +1,13 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Sun, Plus, Search, Sparkles, Inbox, AlertTriangle, Calendar, Star, CheckCircle, ChevronDown, ChevronUp, PlusCircle } from 'lucide-react'
+import { Sun, Plus, Search, Sparkles, Inbox, AlertTriangle, Calendar, Star, CheckCircle, ChevronDown, ChevronUp, PlusCircle, ArrowUpDown } from 'lucide-react'
 import type { Item } from '@/lib/types'
 import ItemCard from '@/components/items/ItemCard'
-import { crearItem, agregarAMiDia, quitarDeMiDia } from '@/lib/actions/items'
+import { crearItem, agregarAMiDia, quitarDeMiDia, reordenarMiDia, moverAManana } from '@/lib/actions/items'
+import { useToast } from '@/components/ui/Toast'
+import { useQueryClient } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 
 interface MiDiaClientProps {
@@ -22,6 +25,9 @@ export default function MiDiaClient({
   itemsMananaIniciales,
   backlogInicial,
 }: MiDiaClientProps) {
+  const { showToast } = useToast()
+  const queryClient = useQueryClient()
+  const router = useRouter()
   const [tabActive, setTabActive] = useState<'hoy' | 'manana'>('hoy')
   const [nuevaTareaTitulo, setNuevaTareaTitulo] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -29,6 +35,8 @@ export default function MiDiaClient({
   const [itemsManana, setItemsManana] = useState<Item[]>(itemsMananaIniciales)
   const [backlog, setBacklog] = useState<Item[]>(backlogInicial)
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
   const [isPending, startTransition] = useTransition()
 
@@ -48,6 +56,204 @@ export default function MiDiaClient({
 
   const activeDateStr = tabActive === 'hoy' ? fechaHoy : fechaManana
   const currentItems = tabActive === 'hoy' ? itemsHoy : itemsManana
+
+  // Guardar nuevo orden persistido en Supabase y estado local
+  const guardarNuevoOrden = (nuevos: Item[], fechaTarget = activeDateStr) => {
+    const conIndices = nuevos.map((it, idx) => ({
+      ...it,
+      metadata: {
+        ...(it.metadata || {}),
+        mi_dia_fecha: fechaTarget,
+        mi_dia_orden: idx,
+      },
+    }))
+
+    if (tabActive === 'hoy') {
+      setItemsHoy(conIndices)
+    } else {
+      setItemsManana(conIndices)
+    }
+
+    startTransition(async () => {
+      try {
+        await reordenarMiDia(conIndices.map(i => i.id), fechaTarget)
+        queryClient.invalidateQueries({ queryKey: ['home-data'] })
+        router.refresh()
+      } catch (err) {
+        console.error('Error al guardar nuevo orden:', err)
+      }
+    })
+  }
+
+  // Mover elemento arriba/abajo
+  const handleMoveItem = (fromIndex: number, toIndex: number) => {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= currentItems.length || toIndex >= currentItems.length) return
+    const cloned = [...currentItems]
+    const [moved] = cloned.splice(fromIndex, 1)
+    cloned.splice(toIndex, 0, moved)
+    guardarNuevoOrden(cloned)
+  }
+
+  // Handlers para Drag & Drop nativo
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.effectAllowed = 'move'
+    setDraggedIndex(index)
+  }
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index)
+    }
+  }
+
+  const handleDragEnd = () => {
+    if (draggedIndex !== null && dragOverIndex !== null && draggedIndex !== dragOverIndex) {
+      handleMoveItem(draggedIndex, dragOverIndex)
+    }
+    setDraggedIndex(null)
+    setDragOverIndex(null)
+  }
+
+  // Ordenar automáticamente por nivel de prioridad
+  const handleOrdenarPorPrioridad = () => {
+    const prioridadVal: Record<string, number> = {
+      urgente: 0,
+      alta: 1,
+      media: 2,
+      baja: 3,
+    }
+
+    const ordenados = [...currentItems].sort((a, b) => {
+      // 1. Tareas completadas siempre al final
+      if (a.estado === 'hecho' && b.estado !== 'hecho') return 1
+      if (a.estado !== 'hecho' && b.estado === 'hecho') return -1
+
+      // 2. Nivel de prioridad
+      const pA = prioridadVal[a.prioridad] ?? 2
+      const pB = prioridadVal[b.prioridad] ?? 2
+      if (pA !== pB) return pA - pB
+
+      // 3. Fecha límite más cercana primero
+      if (a.fecha_limite && b.fecha_limite) {
+        return new Date(a.fecha_limite).getTime() - new Date(b.fecha_limite).getTime()
+      }
+      if (a.fecha_limite && !b.fecha_limite) return -1
+      if (!a.fecha_limite && b.fecha_limite) return 1
+
+      // 4. Por fecha de creación
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    })
+
+    guardarNuevoOrden(ordenados)
+    showToast({
+      message: 'Hitos ordenados por prioridad',
+      type: 'info',
+    })
+  }
+
+  // Mover tarea no completada a Mañana
+  const handleMoverAManana = (id: string) => {
+    const itemTarget = itemsHoy.find(i => i.id === id)
+    if (!itemTarget) return
+
+    const restantesHoy = itemsHoy.filter(i => i.id !== id)
+    setItemsHoy(restantesHoy)
+
+    const itemMananaActualizado: Item = {
+      ...itemTarget,
+      metadata: {
+        ...(itemTarget.metadata || {}),
+        mi_dia_fecha: fechaManana,
+        mi_dia_orden: itemsManana.length,
+      }
+    }
+    setItemsManana(prev => [...prev, itemMananaActualizado])
+
+    showToast({
+      message: `Tarea movida a Mañana`,
+      type: 'success',
+      duration: 5000,
+      action: {
+        label: 'Deshacer',
+        onClick: async () => {
+          setItemsManana(prev => prev.filter(i => i.id !== id))
+          setItemsHoy(prev => [...prev, itemTarget])
+          try {
+            await agregarAMiDia(id, fechaHoy)
+          } catch (e) {
+            console.error('Error al deshacer mover a mañana:', e)
+          }
+        }
+      }
+    })
+
+    startTransition(async () => {
+      try {
+        await moverAManana(id, fechaHoy, fechaManana)
+        queryClient.invalidateQueries({ queryKey: ['home-data'] })
+        router.refresh()
+      } catch (err) {
+        console.error('Error al mover tarea a mañana:', err)
+        setItemsHoy(prev => [...prev, itemTarget])
+        setItemsManana(prev => prev.filter(i => i.id !== id))
+        showToast({ message: 'Error al mover a mañana', type: 'error' })
+      }
+    })
+  }
+
+  // Mover tarea a Hoy (desde la pestaña de Mañana)
+  const handleMoverAHoy = (id: string) => {
+    const itemTarget = itemsManana.find(i => i.id === id)
+    if (!itemTarget) return
+
+    const restantesManana = itemsManana.filter(i => i.id !== id)
+    setItemsManana(restantesManana)
+
+    const itemHoyActualizado: Item = {
+      ...itemTarget,
+      metadata: {
+        ...(itemTarget.metadata || {}),
+        mi_dia_fecha: fechaHoy,
+        mi_dia_orden: itemsHoy.length,
+      }
+    }
+    setItemsHoy(prev => [...prev, itemHoyActualizado])
+
+    showToast({
+      message: `Tarea movida a Hoy`,
+      type: 'success',
+      duration: 5000,
+      action: {
+        label: 'Deshacer',
+        onClick: async () => {
+          setItemsHoy(prev => prev.filter(i => i.id !== id))
+          setItemsManana(prev => [...prev, itemTarget])
+          try {
+            await agregarAMiDia(id, fechaManana)
+            queryClient.invalidateQueries({ queryKey: ['home-data'] })
+            router.refresh()
+          } catch (e) {
+            console.error('Error al deshacer mover a hoy:', e)
+          }
+        }
+      }
+    })
+
+    startTransition(async () => {
+      try {
+        await agregarAMiDia(id, fechaHoy)
+        queryClient.invalidateQueries({ queryKey: ['home-data'] })
+        router.refresh()
+      } catch (err) {
+        console.error('Error al mover tarea a hoy:', err)
+        setItemsManana(prev => [...prev, itemTarget])
+        setItemsHoy(prev => prev.filter(i => i.id !== id))
+        showToast({ message: 'Error al mover a hoy', type: 'error' })
+      }
+    })
+  }
 
   // Completado
   const handleDone = (id: string, hecho: boolean) => {
@@ -76,6 +282,8 @@ export default function MiDiaClient({
     startTransition(async () => {
       try {
         await quitarDeMiDia(id)
+        queryClient.invalidateQueries({ queryKey: ['home-data'] })
+        router.refresh()
         let itemMover: Item | undefined
 
         if (tabActive === 'hoy') {
@@ -98,6 +306,7 @@ export default function MiDiaClient({
             metadata: { ...itemMover.metadata }
           }
           delete (itemLimpio.metadata as any).mi_dia_fecha
+          delete (itemLimpio.metadata as any).mi_dia_orden
           setBacklog(prev => [itemLimpio, ...prev])
         }
       } catch (err) {
@@ -106,11 +315,15 @@ export default function MiDiaClient({
     })
   }
 
-  // Planificar tarea
+  // Planificar tarea desde sugerencias
   const handlePlanificar = (id: string) => {
     startTransition(async () => {
       try {
-        await agregarAMiDia(id, activeDateStr)
+        const listaActual = tabActive === 'hoy' ? itemsHoy : itemsManana
+        const nuevoOrden = listaActual.length
+        await agregarAMiDia(id, activeDateStr, nuevoOrden)
+        queryClient.invalidateQueries({ queryKey: ['home-data'] })
+        router.refresh()
 
         let itemMover: Item | undefined
         setBacklog(prev => {
@@ -129,13 +342,13 @@ export default function MiDiaClient({
         if (itemMover) {
           const itemActualizado = {
             ...itemMover,
-            metadata: { ...itemMover.metadata, mi_dia_fecha: activeDateStr }
+            metadata: { ...itemMover.metadata, mi_dia_fecha: activeDateStr, mi_dia_orden: nuevoOrden }
           } as Item
           
           if (tabActive === 'hoy') {
-            setItemsHoy(prev => [itemActualizado, ...prev])
+            setItemsHoy(prev => [...prev, itemActualizado])
           } else {
-            setItemsManana(prev => [itemActualizado, ...prev])
+            setItemsManana(prev => [...prev, itemActualizado])
           }
         }
       } catch (err) {
@@ -162,16 +375,20 @@ export default function MiDiaClient({
         })
 
         if (nuevoItem && nuevoItem.id) {
-          await agregarAMiDia(nuevoItem.id, activeDateStr)
+          const listaActual = tabActive === 'hoy' ? itemsHoy : itemsManana
+          const nuevoOrden = listaActual.length
+          await agregarAMiDia(nuevoItem.id, activeDateStr, nuevoOrden)
+          queryClient.invalidateQueries({ queryKey: ['home-data'] })
+          router.refresh()
           const itemPlanificado = {
             ...nuevoItem,
-            metadata: { ...nuevoItem.metadata, mi_dia_fecha: activeDateStr }
+            metadata: { ...nuevoItem.metadata, mi_dia_fecha: activeDateStr, mi_dia_orden: nuevoOrden }
           } as Item
 
           if (tabActive === 'hoy') {
-            setItemsHoy(prev => [itemPlanificado, ...prev])
+            setItemsHoy(prev => [...prev, itemPlanificado])
           } else {
-            setItemsManana(prev => [itemPlanificado, ...prev])
+            setItemsManana(prev => [...prev, itemPlanificado])
           }
         }
       } catch (err) {
@@ -333,6 +550,34 @@ export default function MiDiaClient({
 
           {/* Listado */}
           <div className="space-y-4">
+            {/* Barra de control y ordenación */}
+            {currentItems.length > 0 && (
+              <div className="flex items-center justify-between gap-3 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-400">
+                    {currentItems.length} {currentItems.length === 1 ? 'hito planificado' : 'hitos planificados'}
+                  </span>
+                  {currentItems.length > 1 && (
+                    <span className="hidden sm:inline-block text-[11px] text-slate-500">
+                      · Arrastra o usa las flechas para ordenar prioridad
+                    </span>
+                  )}
+                </div>
+
+                {currentItems.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleOrdenarPorPrioridad}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#101320] hover:bg-purple-600/10 text-slate-300 hover:text-purple-300 border border-white/5 hover:border-purple-500/30 transition-all active:scale-95 shadow-sm cursor-pointer"
+                    title="Ordenar automáticamente por nivel de prioridad"
+                  >
+                    <ArrowUpDown className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Ordenar por prioridad</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {currentItems.length === 0 ? (
               <div data-testid="card" className="flex flex-col items-center justify-center py-12 md:py-24 text-center bg-[#101320]/40 rounded-2xl border border-dashed border-white/5 text-slate-500 p-6 backdrop-blur-sm">
                 <CheckCircle className="w-10 h-10 md:w-14 md:h-14 text-slate-600/60 mb-3" />
@@ -343,15 +588,36 @@ export default function MiDiaClient({
               </div>
             ) : (
               <div className="space-y-3 item-list">
-                {currentItems.map(item => (
-                  <ItemCard
+                {currentItems.map((item, index) => (
+                  <div
                     key={item.id}
-                    item={item}
-                    onDone={handleDone}
-                    onArchived={handleArchived}
-                    onDeleted={handleDeleted}
-                    onRemoveFromMyDay={handleQuitar}
-                  />
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDragEnd={handleDragEnd}
+                    className={`transition-all duration-200 rounded-2xl ${
+                      draggedIndex === index ? 'opacity-35 scale-[0.98]' : ''
+                    } ${
+                      dragOverIndex === index && draggedIndex !== index
+                        ? 'ring-2 ring-purple-500/70 shadow-lg shadow-purple-500/10 -translate-y-0.5'
+                        : ''
+                    }`}
+                  >
+                    <ItemCard
+                      item={item}
+                      orderIndex={index}
+                      canMoveUp={index > 0}
+                      canMoveDown={index < currentItems.length - 1}
+                      onMoveUp={() => handleMoveItem(index, index - 1)}
+                      onMoveDown={() => handleMoveItem(index, index + 1)}
+                      onMoveToTomorrow={tabActive === 'hoy' ? handleMoverAManana : undefined}
+                      onMoveToToday={tabActive === 'manana' ? handleMoverAHoy : undefined}
+                      onDone={handleDone}
+                      onArchived={handleArchived}
+                      onDeleted={handleDeleted}
+                      onRemoveFromMyDay={handleQuitar}
+                    />
+                  </div>
                 ))}
               </div>
             )}

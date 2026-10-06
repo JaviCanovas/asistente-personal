@@ -12,7 +12,7 @@ import { getHomeData } from '@/lib/actions/home'
 import { categorizarEvento, getEtiquetaFechaRelativa } from '@/lib/ai/prioritize'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useToast } from '@/components/ui/Toast'
-import { format } from 'date-fns'
+import { format, addDays } from 'date-fns'
 
 interface HomeClientProps {
   priorizados: ItemPriorizado[]
@@ -38,7 +38,7 @@ export default function HomeClient({
   const { showToast } = useToast()
   const queryClient = useQueryClient()
 
-  // Consulta persistida en IndexedDB: pinta de inmediato lo último conocido y refresca en segundo plano
+  // Consulta persistida en IndexedDB: refresco inmediato sin bloqueo
   const { data: homeData, isFetching } = useQuery({
     queryKey: ['home-data'],
     queryFn: () => getHomeData(),
@@ -48,13 +48,15 @@ export default function HomeClient({
       plantillas,
       rutinas,
     },
-    staleTime: 60 * 1000,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
-  const priorizadosActuales = homeData?.priorizados ?? priorizados
-  const proximosActuales = homeData?.proximosEventos ?? proximosEventos
-  const plantillasActuales = homeData?.plantillas ?? plantillas
-  const rutinasActuales = homeData?.rutinas ?? rutinas
+  const priorizadosActuales = priorizados ?? homeData?.priorizados
+  const proximosActuales = proximosEventos ?? homeData?.proximosEventos
+  const plantillasActuales = plantillas ?? homeData?.plantillas
+  const rutinasActuales = rutinas ?? homeData?.rutinas
 
   const [itemsHoy, setItemsHoy] = useState<ItemPriorizado[]>(priorizadosActuales)
   const [itemsProximos, setItemsProximos] = useState<Item[]>(proximosActuales)
@@ -62,6 +64,16 @@ export default function HomeClient({
   const [expandedEventoId, setExpandedEventoId] = useState<string | null>(null)
   const [quickInput, setQuickInput] = useState('')
   const [isCreatingQuick, setIsCreatingQuick] = useState(false)
+
+  // Sincronizar de inmediato cuando el componente recibe props actualizadas desde el servidor
+  useEffect(() => {
+    if (priorizados) {
+      setItemsHoy(priorizados)
+    }
+    if (proximosEventos) {
+      setItemsProximos(proximosEventos)
+    }
+  }, [priorizados, proximosEventos])
 
   // Sincronizar items locales cuando React Query finaliza la revalidación en background
   useEffect(() => {
@@ -213,7 +225,27 @@ export default function HomeClient({
     }
     return true
   })
-  const tareasMiDia = tareasHoy.filter(({ item, esMiDia }) => esMiDia || esItemDeMiDia(item))
+
+  // Helper robusto para obtener orden numérico
+  const getMiDiaOrden = (item: Item) => {
+    const val = (item.metadata as any)?.mi_dia_orden
+    if (val !== undefined && val !== null && val !== '') {
+      const num = Number(val)
+      if (!isNaN(num)) return num
+    }
+    return 9999
+  }
+
+  // Lista ordenada de Mi Día: estrictamente ordenada por mi_dia_orden definido por el usuario
+  const tareasMiDia = tareasHoy
+    .filter(({ item, esMiDia }) => esMiDia || esItemDeMiDia(item))
+    .sort((a, b) => {
+      const ordenA = getMiDiaOrden(a.item)
+      const ordenB = getMiDiaOrden(b.item)
+      if (ordenA !== ordenB) return ordenA - ordenB
+      return b.puntuacion - a.puntuacion
+    })
+
   const tareasOtras = tareasHoy.filter(({ item, esMiDia }) => !esMiDia && !esItemDeMiDia(item))
 
   // Lista ordenada: primero todas las de Mi Día, y luego el resto de prioridades para completar al menos 5 items
@@ -433,9 +465,9 @@ export default function HomeClient({
                         )}
                         <li
                           data-testid="list-row"
-                          className="group flex items-start justify-between gap-3.5 min-h-[48px] py-3 px-4 rounded-xl border border-white/6 bg-neutral-900/50 hover:bg-neutral-800/60 hover:border-white/12 transition-all shadow-sm"
+                          className="group flex items-start justify-between gap-3.5 min-h-[50px] py-3.5 px-4 rounded-xl border border-white/6 bg-neutral-900/50 hover:bg-neutral-800/60 hover:border-white/12 transition-all shadow-sm"
                         >
-                          <div className="flex items-start gap-3 min-w-0">
+                          <div className="flex items-start gap-3.5 flex-1 min-w-0">
                             <button
                               type="button"
                               onClick={() => handleCheckItem(item.id)}
@@ -445,15 +477,26 @@ export default function HomeClient({
                               <Circle className="w-4.5 h-4.5 group-hover:hidden text-neutral-500" />
                               <CheckCircle2 className="w-4.5 h-4.5 hidden group-hover:block text-emerald-400" />
                             </button>
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-neutral-200 line-clamp-2 leading-relaxed group-hover:text-white transition-colors">
+                            <div className="flex-1 min-w-0">
+                              <p
+                                title={item.titulo}
+                                className="text-sm font-semibold text-neutral-100 leading-snug break-words group-hover:text-white transition-colors"
+                              >
                                 {item.titulo}
                               </p>
                               <div className="flex items-center gap-2 flex-wrap mt-1.5">
                                 {itemEsDeMiDia && (
                                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-md">
                                     <Sun className="w-3 h-3 text-amber-400" />
-                                    <span>Mi Día</span>
+                                    <span>
+                                      Mi Día
+                                      {(() => {
+                                        const ordenNum = getMiDiaOrden(item)
+                                        return ordenNum !== 9999
+                                          ? ` · #${ordenNum + 1}`
+                                          : index < tareasMiDia.length ? ` · #${index + 1}` : ''
+                                      })()}
+                                    </span>
                                   </span>
                                 )}
                                 {item.proyecto && (
@@ -472,16 +515,18 @@ export default function HomeClient({
                             </div>
                           </div>
 
-                          <span
-                            className="text-xs font-semibold uppercase px-2.5 py-1 rounded-full shrink-0 mt-0.5"
-                            style={{
-                              background: esUrgente ? 'rgba(239, 68, 68, 0.12)' : esAlta ? 'rgba(249, 115, 22, 0.12)' : esMedia ? 'rgba(99, 102, 241, 0.12)' : 'rgba(148, 163, 184, 0.1)',
-                              color: esUrgente ? '#ef4444' : esAlta ? '#f97316' : esMedia ? '#818cf8' : '#94a3b8',
-                              border: `1px solid ${esUrgente ? 'rgba(239, 68, 68, 0.25)' : esAlta ? 'rgba(249, 115, 22, 0.25)' : esMedia ? 'rgba(99, 102, 241, 0.25)' : 'rgba(148, 163, 184, 0.15)'}`,
-                            }}
-                          >
-                            {item.prioridad}
-                          </span>
+                          <div className="shrink-0 mt-0.5 ml-2">
+                            <span
+                              className="text-[10px] sm:text-xs font-semibold uppercase px-2.5 py-1 rounded-full tracking-wider"
+                              style={{
+                                background: esUrgente ? 'rgba(239, 68, 68, 0.15)' : esAlta ? 'rgba(249, 115, 22, 0.15)' : esMedia ? 'rgba(99, 102, 241, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                                color: esUrgente ? '#ef4444' : esAlta ? '#f97316' : esMedia ? '#818cf8' : '#94a3b8',
+                                border: `1px solid ${esUrgente ? 'rgba(239, 68, 68, 0.3)' : esAlta ? 'rgba(249, 115, 22, 0.3)' : esMedia ? 'rgba(99, 102, 241, 0.3)' : 'rgba(148, 163, 184, 0.15)'}`,
+                              }}
+                            >
+                              {item.prioridad}
+                            </span>
+                          </div>
                         </li>
                       </div>
                     )
