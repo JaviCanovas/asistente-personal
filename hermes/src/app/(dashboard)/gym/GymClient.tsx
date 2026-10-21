@@ -19,6 +19,7 @@ import {
   type EjercicioSesionInput,
   type SerieInput
 } from '@/lib/actions/health'
+import { obtenerRepeticionesObjetivo, parsePesoKg } from '@/lib/gymUtils'
 import { enqueueOfflineAction, syncOfflineQueue } from '@/lib/offlineQueue'
 import { useToast } from '@/components/ui/Toast'
 
@@ -137,8 +138,8 @@ interface GymClientProps {
 
 interface SerieSesion {
   numero_serie: number
-  peso_kg: number
-  repeticiones: number
+  peso_kg: number | string
+  repeticiones: number | string
   rir?: string
   completada: boolean
 }
@@ -699,7 +700,7 @@ export default function GymClient({
       repeticionesGuia: ej.repeticionesGuia,
       series: ej.series.map(s => ({
         numero_serie: s.numero_serie,
-        peso_kg: typeof s.peso_kg === 'number' && !isNaN(s.peso_kg) ? Math.max(0, s.peso_kg) : 0,
+        peso_kg: parsePesoKg(s.peso_kg),
         repeticiones: parseInt(String(s.repeticiones)) || 0,
         rir: s.rir,
         completada: s.completada
@@ -718,7 +719,7 @@ export default function GymClient({
     const registrosOptimistas: RutinaGym[] = payloadEjercicios.map(ej => {
       const seriesCompletadas = ej.series.filter(s => s.completada)
       const seriesUsar = seriesCompletadas.length > 0 ? seriesCompletadas : ej.series
-      const maxPeso = Math.max(...seriesUsar.map(s => s.peso_kg), 0)
+      const maxPeso = Math.max(...seriesUsar.map(s => parsePesoKg(s.peso_kg)), 0)
       const repsFormato = seriesUsar.map(s => s.repeticiones).join('-')
       const rirValores = seriesUsar.map(s => s.rir).filter(Boolean)
       const rirTexto = rirValores.length > 0 ? `RIR ${rirValores[0]}` : undefined
@@ -848,6 +849,7 @@ export default function GymClient({
     const parsed = parseFloat(cleaned)
     return isNaN(parsed) ? fallback : parsed
   }
+
 
   // Datos para la gráfica de progresión
   const datosGrafica = rutinas
@@ -1093,7 +1095,7 @@ export default function GymClient({
                                 <label className="label text-[10px] mb-1 text-center">Peso base (kg)</label>
                                 <input
                                   type="number"
-                                  step="0.5"
+                                  step="any"
                                   value={ej.peso_kg}
                                   onChange={e => handleEditEjercicioField(index, 'peso_kg', parseFloat(e.target.value) || 0)}
                                   className="input text-xs py-1.5 text-center"
@@ -1135,7 +1137,7 @@ export default function GymClient({
                                     )}
                                   </div>
                                   <div className="text-xs text-neutral-400 flex items-center gap-2 flex-wrap">
-                                    <span>Plan: <strong className="text-neutral-300">{ej.series} series × {ej.repeticiones} reps</strong></span>
+                                    <span>Plan: <strong className="text-neutral-300">{ej.series} series × {obtenerRepeticionesObjetivo(ej.nombre, ej.repeticiones)} reps</strong></span>
                                     <span>·</span>
                                     <span>Peso sugerido: <strong className="text-emerald-400">{ej.peso_kg > 0 ? `${ej.peso_kg} kg` : 'Libre'}</strong></span>
                                     {ej.descanso && (
@@ -1346,10 +1348,11 @@ export default function GymClient({
                 const pr = recordsPersonales[ej.nombre.trim().toLowerCase()] || 0
 
                 // Resolver objetivo de repeticiones y peso sugerido (desde sesión o desde plantillas)
-                const repeticionesObjetivo =
+                const repeticionesRaw =
                   ej.repeticionesGuia ||
                   plantillas.find(p => p.id === sesionActiva.plantillaId)?.ejercicios.find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.repeticiones ||
                   plantillas.flatMap(p => p.ejercicios).find(e => e.nombre.trim().toLowerCase() === ej.nombre.trim().toLowerCase())?.repeticiones;
+                const repeticionesObjetivo = obtenerRepeticionesObjetivo(ej.nombre, repeticionesRaw);
 
                 const pesoSugerido =
                   ej.pesoSugerido !== undefined
@@ -1473,7 +1476,8 @@ export default function GymClient({
                       </div>
 
                       {ej.series.map((serie, serieIdx) => {
-                        const esPR = pr > 0 && serie.peso_kg > pr
+                        const pesoActualNum = parsePesoKg(serie.peso_kg)
+                        const esPR = pr > 0 && pesoActualNum > pr
                         return (
                           <div
                             key={serieIdx}
@@ -1490,17 +1494,24 @@ export default function GymClient({
                               </span>
                             </div>
 
-                            {/* Peso (kg) con soporte para coma decimal y auto-selección */}
+                            {/* Peso (kg) con soporte para coma o punto decimal (. o ,) */}
                             <div className="col-span-3">
                               <div className="relative">
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  value={serie.peso_kg === 0 ? '' : serie.peso_kg}
+                                  value={serie.peso_kg === 0 || serie.peso_kg === '0' ? '' : serie.peso_kg}
                                   placeholder="0"
                                   onFocus={e => e.target.select()}
                                   onChange={e => {
-                                    const val = parseInputNumber(e.target.value, 0)
+                                    const raw = e.target.value
+                                    // Permitir borrar, números enteros y números decimales con . o ,
+                                    if (raw === '' || /^\d*([.,]\d*)?$/.test(raw)) {
+                                      actualizarSerie(ejIdx, serieIdx, 'peso_kg', raw)
+                                    }
+                                  }}
+                                  onBlur={e => {
+                                    const val = parsePesoKg(e.target.value)
                                     actualizarSerie(ejIdx, serieIdx, 'peso_kg', val)
                                   }}
                                   className="input text-xs text-center py-1.5 px-1 font-semibold text-neutral-100"
@@ -1522,11 +1533,17 @@ export default function GymClient({
                               <input
                                 type="text"
                                 inputMode="numeric"
-                                value={serie.repeticiones === 0 ? '' : serie.repeticiones}
+                                value={serie.repeticiones === 0 || serie.repeticiones === '0' ? '' : serie.repeticiones}
                                 placeholder={repeticionesObjetivo || "10"}
                                 onFocus={e => e.target.select()}
                                 onChange={e => {
-                                  const val = parseInt(e.target.value) || 0
+                                  const raw = e.target.value
+                                  if (raw === '' || /^\d*$/.test(raw)) {
+                                    actualizarSerie(ejIdx, serieIdx, 'repeticiones', raw)
+                                  }
+                                }}
+                                onBlur={e => {
+                                  const val = parseInt(String(e.target.value)) || 0
                                   actualizarSerie(ejIdx, serieIdx, 'repeticiones', val)
                                 }}
                                 className="input text-xs text-center py-1.5 px-1 font-semibold text-neutral-100"
@@ -1714,12 +1731,13 @@ export default function GymClient({
                   <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Peso (kg)</label>
                   <input
                     type="number"
-                    value={form.peso_kg}
+                    value={form.peso_kg === 0 ? '' : form.peso_kg}
+                    placeholder="0"
                     onFocus={e => (e.target as HTMLInputElement).select()}
-                    onChange={e => setForm(f => ({ ...f, peso_kg: parseFloat(e.target.value) || 0 }))}
+                    onChange={e => setForm(f => ({ ...f, peso_kg: parseFloat(e.target.value.replace(',', '.')) || 0 }))}
                     className="input text-center"
                     min={0}
-                    step={0.5}
+                    step="any"
                   />
                 </div>
               </div>

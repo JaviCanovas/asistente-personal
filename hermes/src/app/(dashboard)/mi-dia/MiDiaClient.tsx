@@ -397,10 +397,19 @@ export default function MiDiaClient({
     })
   }
 
+  // Helper para detectar si un evento ya pasó su fecha
+  const esEventoPasado = (item: Item) => {
+    if (item.tipo !== 'evento') return false
+    const fecha = (item.fecha_evento || item.fecha_limite)?.slice(0, 10)
+    return Boolean(fecha && fecha < activeDateStr)
+  }
+
   // --- CLASIFICACIÓN DE SUGERENCIAS ---
-  // 1. Vencidas: de días anteriores (limite o mi_dia_fecha) y no completadas
+  // 1. Vencidas: de días anteriores (limite o mi_dia_fecha) y no completadas (SOLO TAREAS, NUNCA EVENTOS)
   const vencidas = backlog.filter(item => {
     if (item.estado === 'hecho' || item.estado === 'archivado') return false
+    // Los eventos pasados no se consideran vencidos pendientes
+    if (item.tipo === 'evento') return false
     const limitDate = item.fecha_limite ? format(new Date(item.fecha_limite), 'yyyy-MM-dd') : null
     const plannedDate = (item.metadata as any)?.mi_dia_fecha
 
@@ -413,14 +422,17 @@ export default function MiDiaClient({
   // 2. Programadas para el día activo
   const programadas = backlog.filter(item => {
     if (item.estado === 'hecho' || item.estado === 'archivado') return false
+    if (esEventoPasado(item)) return false
     if (vencidas.some(v => v.id === item.id)) return false
     const limitDate = item.fecha_limite ? format(new Date(item.fecha_limite), 'yyyy-MM-dd') : null
-    return limitDate === activeDateStr
+    const eventDate = item.fecha_evento ? format(new Date(item.fecha_evento), 'yyyy-MM-dd') : null
+    return limitDate === activeDateStr || eventDate === activeDateStr
   })
 
   // 3. Inbox (sin procesar)
   const inboxItems = backlog.filter(item => {
     if (item.estado !== 'sin_procesar') return false
+    if (esEventoPasado(item)) return false
     if (vencidas.some(v => v.id === item.id) || programadas.some(p => p.id === item.id)) return false
     return true
   })
@@ -428,6 +440,7 @@ export default function MiDiaClient({
   // 4. Prioritarias (urgente o alta)
   const prioritarias = backlog.filter(item => {
     if (item.estado === 'hecho' || item.estado === 'archivado') return false
+    if (esEventoPasado(item)) return false
     if (vencidas.some(v => v.id === item.id) || programadas.some(p => p.id === item.id) || inboxItems.some(i => i.id === item.id)) return false
     return item.prioridad === 'urgente' || item.prioridad === 'alta'
   })
@@ -435,6 +448,7 @@ export default function MiDiaClient({
   // 5. Resto del backlog general
   const restoBacklog = backlog.filter(item => {
     if (item.estado === 'hecho' || item.estado === 'archivado') return false
+    if (esEventoPasado(item)) return false
     return !vencidas.some(v => v.id === item.id) &&
            !programadas.some(p => p.id === item.id) &&
            !inboxItems.some(i => i.id === item.id) &&

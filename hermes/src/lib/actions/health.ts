@@ -4,6 +4,12 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { RutinaGym, PlantillaGym, SerieGym, SesionGym } from '@/lib/types'
 import { actualizarNotasPlantilla } from '@/lib/utils'
+import {
+  REPETICIONES_OBJETIVO_POR_EJERCICIO,
+  esFormatoSeriesHistoricas,
+  obtenerRepeticionesObjetivo,
+  parsePesoKg
+} from '@/lib/gymUtils'
 
 function isSupabaseConfigured() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
@@ -136,7 +142,15 @@ export async function sincronizarDescansos(): Promise<{ ok: boolean; mensaje: st
 }
 
 export async function getPlantillasGym(): Promise<PlantillaGym[]> {
-  if (!isSupabaseConfigured()) return PLANTILLAS_PREDEFINIDAS
+  if (!isSupabaseConfigured()) {
+    return PLANTILLAS_PREDEFINIDAS.map(p => ({
+      ...p,
+      ejercicios: p.ejercicios.map(e => ({
+        ...e,
+        repeticiones: obtenerRepeticionesObjetivo(e.nombre, e.repeticiones)
+      }))
+    }))
+  }
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('plantillas_gym')
@@ -166,7 +180,33 @@ export async function getPlantillasGym(): Promise<PlantillaGym[]> {
     }
     return insertedData as PlantillaGym[]
   }
-  return data as PlantillaGym[]
+
+  // Auto-curación de plantillas: reparar ejercicios cuyo campo repeticiones se haya corrompido con historial de series (ej. "12-12-12-12")
+  const plantillasLimpias = (data as PlantillaGym[]).map(p => {
+    let plantillaModificada = false
+    const ejerciciosCorregidos = (p.ejercicios || []).map(ej => {
+      const objetivo = obtenerRepeticionesObjetivo(ej.nombre, ej.repeticiones)
+      if (objetivo !== ej.repeticiones) {
+        plantillaModificada = true
+        return { ...ej, repeticiones: objetivo }
+      }
+      return ej
+    })
+
+    if (plantillaModificada) {
+      // Guardar en segundo plano la plantilla saneada en Supabase para persistir el rango objetivo
+      void Promise.resolve(
+        supabase
+          .from('plantillas_gym')
+          .update({ ejercicios: ejerciciosCorregidos })
+          .eq('id', p.id)
+      ).catch((err: any) => console.warn('[getPlantillasGym] Error auto-reparando plantilla:', err))
+    }
+
+    return { ...p, ejercicios: ejerciciosCorregidos }
+  })
+
+  return plantillasLimpias
 }
 
 export async function guardarPlantillaGym(id: string, ejercicios: any[], nombreDia?: string) {
@@ -244,8 +284,8 @@ export async function registrarSesionCompleta(fecha: string, ejercicios: any[], 
   // Registrar cada ejercicio completado en el historial
   for (const ej of ejercicios) {
     if (ej.completado) {
-      const pesoValue = ej.pesoLog !== '' && !isNaN(parseFloat(ej.pesoLog))
-        ? parseFloat(ej.pesoLog)
+      const pesoValue = ej.pesoLog !== '' && !isNaN(parseFloat(String(ej.pesoLog).replace(',', '.')))
+        ? parseFloat(String(ej.pesoLog).replace(',', '.'))
         : (ej.peso_kg ?? null)
 
       // Guardar repeticiones como string para soportar formatos como "10-10-10-10"
@@ -281,21 +321,23 @@ export async function registrarSesionCompleta(fecha: string, ejercicios: any[], 
       const ejerciciosActualizados = (plantilla.ejercicios as any[]).map((ejOriginal: any) => {
         const ejSesion = ejercicios.find((e: any) => e.nombre === ejOriginal.nombre && e.completado)
         if (ejSesion) {
-          // Peso: usar el valor registrado en la sesión si es válido
-          const pesoGuardar = ejSesion.pesoLog !== '' && !isNaN(parseFloat(ejSesion.pesoLog))
-            ? parseFloat(ejSesion.pesoLog)
+          // Peso: usar el valor registrado en la sesión si es válido (con soporte de decimales flotantes)
+          const pesoGuardar = ejSesion.pesoLog !== '' && !isNaN(parseFloat(String(ejSesion.pesoLog).replace(',', '.')))
+            ? parseFloat(String(ejSesion.pesoLog).replace(',', '.'))
             : ejOriginal.peso_kg
 
           // Series: usar el valor registrado si es válido
           const seriesGuardar = parseInt(ejSesion.seriesLog) || ejOriginal.series
 
-          // Repeticiones: guardar como string para soportar "10-10-10-10", rangos, etc.
-          const repsGuardar = ejSesion.repeticionesLog?.trim() || ejOriginal.repeticiones
+          // Repeticiones: conservar siempre el rango objetivo de la plantilla (ej: "12-15", "8-10")
+          const repsPreservadas = esFormatoSeriesHistoricas(ejOriginal.repeticiones)
+            ? (REPETICIONES_OBJETIVO_POR_EJERCICIO[ejOriginal.nombre.trim().toLowerCase()] || ejOriginal.repeticiones)
+            : ejOriginal.repeticiones
 
           return {
             ...ejOriginal,
             series: seriesGuardar,
-            repeticiones: repsGuardar,
+            repeticiones: repsPreservadas,
             peso_kg: pesoGuardar,
             notas: actualizarNotasPlantilla(ejOriginal.notas, ejSesion.notasLog)
           }
@@ -546,7 +588,9 @@ export async function guardarSesionEstructurada(payload: {
       const seriesToInsert: any[] = []
       for (const ej of ejerciciosCompletados) {
         for (const s of ej.series) {
-          const pesoNumerico = typeof s.peso_kg === 'number' && !isNaN(s.peso_kg) ? Math.max(0, s.peso_kg) : 0
+          const pesoNumerico = typeof s.peso_kg === 'number'
+            ? (!isNaN(s.peso_kg) ? Math.max(0, s.peso_kg) : 0)
+            : (parseFloat(String(s.peso_kg).replace(',', '.')) || 0)
           const repsNumerico = parseInt(String(s.repeticiones)) || 0
           const numSerie = Math.max(1, Math.round(Number(s.numero_serie) || 1))
 
@@ -578,7 +622,12 @@ export async function guardarSesionEstructurada(payload: {
   for (const ej of ejerciciosCompletados) {
     const seriesCompletadas = ej.series.filter(s => s.completada)
     const seriesUsar = seriesCompletadas.length > 0 ? seriesCompletadas : ej.series
-    const pesosValidos = seriesUsar.map(s => Number(s.peso_kg) || 0)
+    const pesosValidos = seriesUsar.map(s => {
+      const p = typeof s.peso_kg === 'number'
+        ? (!isNaN(s.peso_kg) ? s.peso_kg : 0)
+        : (parseFloat(String(s.peso_kg).replace(',', '.')) || 0)
+      return p
+    })
     const maxPeso = pesosValidos.length > 0 ? Math.max(...pesosValidos, 0) : 0
     const repsFormato = seriesUsar.map(s => s.repeticiones || 10).join('-')
     const rirValores = seriesUsar.map(s => s.rir).filter(Boolean)
@@ -618,15 +667,24 @@ export async function guardarSesionEstructurada(payload: {
           )
           if (ejSesion) {
             const seriesValidas = ejSesion.series || []
-            const pesosSesion = seriesValidas.map(s => Number(s.peso_kg) || 0)
+            const pesosSesion = seriesValidas.map(s => {
+              const p = typeof s.peso_kg === 'number'
+                ? (!isNaN(s.peso_kg) ? s.peso_kg : 0)
+                : (parseFloat(String(s.peso_kg).replace(',', '.')) || 0)
+              return p
+            })
             const maxPesoSesion = pesosSesion.length > 0 ? Math.max(...pesosSesion, 0) : 0
-            const repsSesion = seriesValidas.map(s => s.repeticiones).join('-')
             const rirSesion = seriesValidas.find(s => s.rir)?.rir
+
+            // Conservar siempre el rango objetivo (ej. "12-15 reps") y no reemplazar por desglose (ej: "12-12-12-12")
+            const repeticionesPreservadas = esFormatoSeriesHistoricas(ejOriginal.repeticiones)
+              ? (REPETICIONES_OBJETIVO_POR_EJERCICIO[ejOriginal.nombre.trim().toLowerCase()] || ejOriginal.repeticiones)
+              : ejOriginal.repeticiones
 
             return {
               ...ejOriginal,
               series: seriesValidas.length || ejOriginal.series,
-              repeticiones: repsSesion || ejOriginal.repeticiones,
+              repeticiones: repeticionesPreservadas,
               peso_kg: maxPesoSesion > 0 ? maxPesoSesion : ejOriginal.peso_kg,
               notas: rirSesion ? `RIR ${rirSesion}` : ejOriginal.notas
             }

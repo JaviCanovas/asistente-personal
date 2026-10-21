@@ -291,7 +291,7 @@ export default function TareasClient({ tareas: tareasIniciales, proyectos: proye
 
   // Agrupaciones para vista "Planeadas"
   const getFechaItem = (t: Item) => (t.fecha_limite || t.fecha_evento)?.split('T')[0] || ''
-  const tareasVencidas = tareasActivas.filter(t => getFechaItem(t) && getFechaItem(t) < hoyStr)
+  const tareasVencidas = tareasActivas.filter(t => t.tipo !== 'evento' && getFechaItem(t) && getFechaItem(t) < hoyStr)
   const tareasParaHoy = tareasActivas.filter(t => getFechaItem(t) && getFechaItem(t) === hoyStr)
   const tareasFuturas = tareasActivas.filter(t => getFechaItem(t) && getFechaItem(t) > hoyStr)
 

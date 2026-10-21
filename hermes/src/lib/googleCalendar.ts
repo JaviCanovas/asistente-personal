@@ -75,16 +75,19 @@ export async function getAuthenticatedAuthClient() {
       console.log('[getAuthenticatedAuthClient] Access token refreshed successfully.')
     } catch (err: any) {
       console.warn('[getAuthenticatedAuthClient] Error refreshing token:', err.message)
-      // Si el refresh token no es válido o ha expirado (ej. "invalid_grant"), eliminamos la credencial para permitir reconectar
-      try {
-        const supabase = await createClient()
-        await supabase
-          .from('google_credentials')
-          .delete()
-          .eq('id', creds.id)
-        console.log('[getAuthenticatedAuthClient] Invalid credentials deleted from database.')
-      } catch (dbErr: any) {
-        console.warn('[getAuthenticatedAuthClient] Error cleaning up credentials:', dbErr.message)
+      // Solo si el refresh token ha sido explícitamente revocado o es inválido eliminamos la credencial
+      const esInvalido = err.message?.includes('invalid_grant') || err.message?.includes('token has been revoked')
+      if (esInvalido) {
+        try {
+          const supabase = await createClient()
+          await supabase
+            .from('google_credentials')
+            .delete()
+            .eq('id', creds.id)
+          console.log('[getAuthenticatedAuthClient] Credenciales revocadas eliminadas de la base de datos.')
+        } catch (dbErr: any) {
+          console.warn('[getAuthenticatedAuthClient] Error cleaning up credentials:', dbErr.message)
+        }
       }
       return null
     }
@@ -97,6 +100,32 @@ export async function getAuthenticatedAuthClient() {
 // OPERACIONES DE SINCRONIZACIÓN DE EVENTOS
 // ============================================================
 
+function normalizarHora(horaRaw: string | null | undefined): string | null {
+  if (!horaRaw || typeof horaRaw !== 'string') return null
+  const match = horaRaw.trim().match(/^(\d{1,2}):(\d{2})/)
+  if (!match) return null
+  const h = match[1].padStart(2, '0')
+  const m = match[2]
+  return `${h}:${m}:00`
+}
+
+function calcularHoraFin(fechaStr: string, horaInicio: string): { fechaFin: string; horaFin: string } {
+  const [hStr, mStr] = horaInicio.split(':')
+  const h = parseInt(hStr, 10)
+  const m = parseInt(mStr, 10)
+
+  let endH = h + 1
+  let fechaFin = fechaStr
+  if (endH >= 24) {
+    endH = endH % 24
+    const d = new Date(fechaStr)
+    d.setDate(d.getDate() + 1)
+    fechaFin = d.toISOString().split('T')[0]
+  }
+  const horaFin = `${String(endH).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
+  return { fechaFin, horaFin }
+}
+
 function mapearItemAEventoGoogle(item: Item) {
   const fechaInicioRaw = item.tipo === 'evento' ? item.fecha_evento : item.fecha_limite
   if (!fechaInicioRaw) return null
@@ -105,22 +134,38 @@ function mapearItemAEventoGoogle(item: Item) {
   const fechaInicioStr = fechaInicioRaw.split('T')[0]
   const fechaFinStr = fechaFinRaw.split('T')[0]
 
-  const isAllDay = !item.hora_inicio
+  const horaInicioNorm = normalizarHora(item.hora_inicio)
+  const horaFinNorm = normalizarHora(item.hora_fin)
 
   let startObj: any = {}
   let endObj: any = {}
 
-  if (isAllDay) {
+  if (!horaInicioNorm) {
+    // Evento de día completo
     startObj = { date: fechaInicioStr }
     const endDateObj = new Date(fechaFinStr)
     endDateObj.setDate(endDateObj.getDate() + 1)
     const nextDayStr = endDateObj.toISOString().split('T')[0]
     endObj = { date: nextDayStr }
   } else {
-    const startIso = `${fechaInicioStr}T${item.hora_inicio}:00`
-    const endIso = `${fechaFinStr}T${item.hora_fin || '23:59'}:00`
-    startObj = { dateTime: new Date(startIso).toISOString(), timeZone: 'Europe/Madrid' }
-    endObj = { dateTime: new Date(endIso).toISOString(), timeZone: 'Europe/Madrid' }
+    // Evento con hora (Google Calendar v3 interpreta Europe/Madrid con offset automático de verano/invierno)
+    startObj = {
+      dateTime: `${fechaInicioStr}T${horaInicioNorm}`,
+      timeZone: 'Europe/Madrid',
+    }
+
+    if (horaFinNorm) {
+      endObj = {
+        dateTime: `${fechaFinStr}T${horaFinNorm}`,
+        timeZone: 'Europe/Madrid',
+      }
+    } else {
+      const calculo = calcularHoraFin(fechaInicioStr, horaInicioNorm)
+      endObj = {
+        dateTime: `${calculo.fechaFin}T${calculo.horaFin}`,
+        timeZone: 'Europe/Madrid',
+      }
+    }
   }
 
   const overrides: { method: string; minutes: number }[] = []
@@ -146,36 +191,42 @@ function mapearItemAEventoGoogle(item: Item) {
 
 // 1. Crear evento en Google Calendar
 export async function crearEventoGoogle(item: Item): Promise<string | null> {
-  const auth = await getAuthenticatedAuthClient()
-  if (!auth) return null
-
-  const eventData = mapearItemAEventoGoogle(item)
-  if (!eventData) return null
-
   try {
+    const auth = await getAuthenticatedAuthClient()
+    if (!auth) {
+      console.warn('[crearEventoGoogle] No hay cliente autenticado de Google')
+      return null
+    }
+
+    const eventData = mapearItemAEventoGoogle(item)
+    if (!eventData) {
+      console.warn('[crearEventoGoogle] No se pudo mapear el item a evento de Google:', item.id)
+      return null
+    }
+
     const calendar = google.calendar({ version: 'v3', auth })
     const response = await calendar.events.insert({
       calendarId: 'primary',
       requestBody: eventData,
     })
     invalidarCacheGoogle()
-    console.log('[crearEventoGoogle] Evento creado:', response.data.id)
+    console.log('[crearEventoGoogle] Evento creado en Google Calendar:', response.data.id)
     return response.data.id || null
   } catch (err: any) {
-    console.error('[crearEventoGoogle] Error inserting event:', err.message)
+    console.error('[crearEventoGoogle] Error al insertar evento en Google Calendar:', err.message)
     return null
   }
 }
 
 // 2. Actualizar evento existente
 export async function actualizarEventoGoogle(item: Item, eventId: string): Promise<boolean> {
-  const auth = await getAuthenticatedAuthClient()
-  if (!auth) return false
-
-  const eventData = mapearItemAEventoGoogle(item)
-  if (!eventData) return false
-
   try {
+    const auth = await getAuthenticatedAuthClient()
+    if (!auth) return false
+
+    const eventData = mapearItemAEventoGoogle(item)
+    if (!eventData) return false
+
     const calendar = google.calendar({ version: 'v3', auth })
     await calendar.events.update({
       calendarId: 'primary',
@@ -183,10 +234,10 @@ export async function actualizarEventoGoogle(item: Item, eventId: string): Promi
       requestBody: eventData,
     })
     invalidarCacheGoogle()
-    console.log('[actualizarEventoGoogle] Evento actualizado:', eventId)
+    console.log('[actualizarEventoGoogle] Evento actualizado en Google Calendar:', eventId)
     return true
   } catch (err: any) {
-    console.error('[actualizarEventoGoogle] Error updating event:', err.message)
+    console.error('[actualizarEventoGoogle] Error updating event in Google Calendar:', err.message)
     return false
   }
 }
@@ -387,12 +438,16 @@ export async function obtenerEventosGoogle(options?: { timeMin?: string; timeMax
         hora_fin = `${hrs}:${mins}`
       }
 
+      const fechaFinOInicio = (fechaFinStr || fechaInicioStr).split('T')[0]
+      const hoyStr = new Date().toISOString().split('T')[0]
+      const esPasado = Boolean(fechaFinOInicio && fechaFinOInicio < hoyStr)
+
       return {
         id: `google-${event.id}`,
         tipo: 'evento',
         titulo: event.summary || '(Sin título)',
         descripcion: event.description || '',
-        estado: 'activo',
+        estado: esPasado ? 'hecho' : 'activo',
         prioridad: 'media',
         fecha_evento: fechaInicioStr,
         hora_inicio,

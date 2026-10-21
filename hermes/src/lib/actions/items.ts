@@ -31,6 +31,36 @@ const ITEMS_DEMO: Item[] = [
   },
 ]
 
+export async function autoCompletarEventosPasados() {
+  if (!isSupabaseConfigured()) return
+  try {
+    const supabase = await createClient()
+    const hoyStr = new Date().toISOString().slice(0, 10)
+
+    // 1. Eventos con fecha_evento anterior al día de hoy
+    await supabase
+      .from('items')
+      .update({ estado: 'hecho' })
+      .eq('tipo', 'evento')
+      .in('estado', ['activo', 'sin_procesar'])
+      .lt('fecha_evento', hoyStr)
+
+    // 2. Eventos con fecha_limite anterior al día de hoy si no tienen fecha_evento
+    await supabase
+      .from('items')
+      .update({ estado: 'hecho' })
+      .eq('tipo', 'evento')
+      .in('estado', ['activo', 'sin_procesar'])
+      .is('fecha_evento', null)
+      .lt('fecha_limite', hoyStr)
+  } catch (e: any) {
+    if (e?.digest === 'DYNAMIC_SERVER_USAGE' || e?.message?.includes('DYNAMIC_SERVER_USAGE')) {
+      throw e
+    }
+    console.error('[autoCompletarEventosPasados] Error:', e)
+  }
+}
+
 export async function getItems(filtros?: {
   tipo?: ItemTipo
   estado?: ItemEstado
@@ -41,6 +71,13 @@ export async function getItems(filtros?: {
     if (filtros?.tipo)   items = items.filter(i => i.tipo === filtros.tipo)
     if (filtros?.estado) items = items.filter(i => i.estado === filtros.estado)
     return items
+  }
+
+  // Auto-cumplir eventos pasados para que no queden como activos
+  try {
+    await autoCompletarEventosPasados()
+  } catch (e) {
+    // Silencioso
   }
 
   // Sincronizar periódicamente eventos eliminados en Google Calendar (cooldown 15s)
@@ -72,7 +109,24 @@ export async function getItems(filtros?: {
 }
 
 export async function getItemsActivos() {
-  if (!isSupabaseConfigured()) return ITEMS_DEMO.filter(i => ['activo', 'sin_procesar'].includes(i.estado))
+  if (!isSupabaseConfigured()) {
+    const hoyStr = new Date().toISOString().slice(0, 10)
+    return ITEMS_DEMO.filter(i => {
+      if (!['activo', 'sin_procesar'].includes(i.estado)) return false
+      if (i.tipo === 'evento') {
+        const fecha = (i.fecha_evento || i.fecha_limite)?.slice(0, 10)
+        if (fecha && fecha < hoyStr) return false
+      }
+      return true
+    })
+  }
+
+  // Auto-cumplir eventos pasados para que no aparezcan en activos ni sugerencias
+  try {
+    await autoCompletarEventosPasados()
+  } catch (e) {
+    // Silencioso
+  }
 
   // Sincronizar periódicamente eventos eliminados en Google Calendar (cooldown 15s)
   try {
@@ -94,7 +148,18 @@ export async function getItemsActivos() {
     console.error('[getItemsActivos]', error.message)
     return ITEMS_DEMO
   }
-  return data as Item[]
+
+  // Filtrado de seguridad: ningún evento cuyo día ya haya pasado debe considerarse activo
+  const hoyStr = new Date().toISOString().slice(0, 10)
+  const itemsFiltrados = (data as Item[]).filter(i => {
+    if (i.tipo === 'evento') {
+      const fecha = (i.fecha_evento || i.fecha_limite)?.slice(0, 10)
+      if (fecha && fecha < hoyStr) return false
+    }
+    return true
+  })
+
+  return itemsFiltrados
 }
 
 export async function crearItem(data: {
@@ -170,21 +235,25 @@ export async function crearItem(data: {
   if (error) throw new Error(error.message)
 
   // Sincronizar con Google Calendar si tiene fecha programada
-  const { crearEventoGoogle } = await import('@/lib/googleCalendar')
-  const tieneFecha = data.fecha_evento || data.fecha_limite
-  if (tieneFecha) {
-    const googleEventId = await crearEventoGoogle(item as Item)
-    if (googleEventId) {
-      // Actualizar el item con el ID del evento retornado por Google
-      const { error: updateError } = await supabase
-        .from('items')
-        .update({ google_event_id: googleEventId })
-        .eq('id', item.id)
-      if (updateError) {
-        console.error('[crearItem] Error al guardar google_event_id:', updateError.message)
+  try {
+    const { crearEventoGoogle } = await import('@/lib/googleCalendar')
+    const tieneFecha = item.fecha_evento || item.fecha_limite
+    if (tieneFecha) {
+      const googleEventId = await crearEventoGoogle(item as Item)
+      if (googleEventId) {
+        // Actualizar el item con el ID del evento retornado por Google
+        const { error: updateError } = await supabase
+          .from('items')
+          .update({ google_event_id: googleEventId })
+          .eq('id', item.id)
+        if (updateError) {
+          console.error('[crearItem] Error al guardar google_event_id:', updateError.message)
+        }
+        item.google_event_id = googleEventId
       }
-      item.google_event_id = googleEventId
     }
+  } catch (gErr: any) {
+    console.error('[crearItem] Error al sincronizar con Google Calendar:', gErr.message)
   }
 
   revalidatePath('/')
@@ -230,10 +299,17 @@ export async function actualizarItem(id: string, data: Partial<Item>) {
     }
   }
 
-  const hayCambioFecha = data.fecha_limite !== undefined || data.fecha_evento !== undefined || data.tipo !== undefined
+  const hayCambioParaGoogle =
+    data.fecha_limite !== undefined ||
+    data.fecha_evento !== undefined ||
+    data.tipo !== undefined ||
+    data.hora_inicio !== undefined ||
+    data.hora_fin !== undefined ||
+    data.titulo !== undefined ||
+    data.descripcion !== undefined
 
-  // Solo si hay cambios de fecha o tipo necesitamos comprobar el estado previo para Google Calendar
-  if (!hayCambioFecha) {
+  // Solo si no hay cambios que afecten al calendario de Google podemos hacer actualización directa rápida
+  if (!hayCambioParaGoogle) {
     const { data: item, error } = await supabase
       .from('items')
       .update(data)

@@ -304,7 +304,8 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
                       <div className="hidden md:block space-y-1">
                         {itemsDelDia.slice(0, 3).map(item => {
                           const conf = TIPO_CONFIG[item.tipo]
-                          const isTaskCompleted = item.estado === 'hecho'
+                          const isTaskCompleted = item.estado === 'hecho' && item.tipo !== 'evento'
+                          const isEventPassed = item.estado === 'hecho' && item.tipo === 'evento'
                           
                           return (
                             <div
@@ -316,12 +317,14 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
                               className={`text-[10px] px-2 py-1 rounded-lg border font-medium truncate cursor-pointer transition-all duration-250 ${
                                 isTaskCompleted 
                                   ? 'opacity-40 line-through bg-neutral-900/50 border-neutral-850 text-neutral-500' 
+                                  : isEventPassed
+                                  ? 'opacity-65 bg-neutral-900/40 border-neutral-800 text-neutral-400 hover:brightness-110'
                                   : 'hover:brightness-110 shadow-sm hover:shadow'
                               }`}
                               style={{
                                 background: isTaskCompleted ? 'transparent' : conf.bg.split(' ')[0] || 'rgba(99,102,241,0.05)',
                                 borderColor: isTaskCompleted ? 'transparent' : conf.bg.split(' ')[1] || 'rgba(99,102,241,0.1)',
-                                color: isTaskCompleted ? 'var(--text-muted)' : 'var(--text-primary)'
+                                color: isTaskCompleted ? 'var(--text-muted)' : isEventPassed ? 'var(--text-secondary)' : 'var(--text-primary)'
                               }}
                             >
                               <span className="mr-1 inline-block shrink-0 scale-90">{conf.emoji}</span>
@@ -396,7 +399,8 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
                     <div className="flex-1 overflow-y-auto space-y-2 pr-0.5">
                       {itemsDelDia.map(item => {
                         const conf = TIPO_CONFIG[item.tipo]
-                        const isTaskCompleted = item.estado === 'hecho'
+                        const isTaskCompleted = item.estado === 'hecho' && item.tipo !== 'evento'
+                        const isEventPassed = item.estado === 'hecho' && item.tipo === 'evento'
                         
                         return (
                           <div
@@ -408,12 +412,14 @@ export default function CalendarioClient({ eventos, todosItems, proyectos }: Cal
                             className={`text-xs p-2.5 rounded-xl border font-semibold cursor-pointer transition-all duration-200 ${
                               isTaskCompleted 
                                 ? 'opacity-40 line-through bg-neutral-900/50 border-neutral-800 text-neutral-500' 
+                                : isEventPassed
+                                ? 'opacity-65 bg-neutral-900/40 border-neutral-800 text-neutral-400 hover:brightness-110'
                                 : 'hover:brightness-110 shadow-sm hover:shadow'
                             }`}
                             style={{
                               background: isTaskCompleted ? 'transparent' : conf.bg.split(' ')[0] || 'rgba(99,102,241,0.05)',
                               borderColor: isTaskCompleted ? 'transparent' : conf.bg.split(' ')[1] || 'rgba(99,102,241,0.1)',
-                              color: isTaskCompleted ? 'var(--text-muted)' : 'var(--text-primary)'
+                              color: isTaskCompleted ? 'var(--text-muted)' : isEventPassed ? 'var(--text-secondary)' : 'var(--text-primary)'
                             }}
                           >
                             <div className="flex items-center gap-1.5 mb-1.5">
