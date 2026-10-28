@@ -20,11 +20,11 @@ function getAllowedChatIds(): number[] {
 }
 
 function getBotToken(): string {
-  return process.env.TELEGRAM_BOT_TOKEN || ''
+  return (process.env.TELEGRAM_BOT_TOKEN || '').trim()
 }
 
 function getGroqApiKey(): string {
-  return process.env.GROQ_API_KEY || ''
+  return (process.env.GROQ_API_KEY || '').trim()
 }
 
 async function enviarRespuestaTelegram(chatId: number, text: string, replyTo?: number): Promise<void> {

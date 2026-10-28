@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
  */
 
 export async function GET(request: NextRequest) {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN
+  const botToken = (process.env.TELEGRAM_BOT_TOKEN || '').trim()
 
   if (!botToken) {
     return NextResponse.json(
@@ -23,8 +23,9 @@ export async function GET(request: NextRequest) {
   }
 
   // Obtener la URL base de la app
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-  const webhookUrl = `${appUrl.replace(/\/$/, '')}/api/telegram/webhook`
+  const customUrl = request.nextUrl.searchParams.get('url')
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin || 'http://localhost:3000').trim()
+  const webhookUrl = customUrl ? customUrl.trim() : `${appUrl.replace(/\/$/, '')}/api/telegram/webhook`
 
   try {
     const response = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
